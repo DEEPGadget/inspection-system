@@ -1,0 +1,18 @@
+{
+  "profile_name": "default",
+  "product_line": "generic",
+  "phases": {
+    "phase2_sw_basic": {"enabled": true, "scripts": ["sw_cpu", "sw_memory", "sw_gpu", "sw_storage", "sw_network"]},
+    "phase3_os_config": {"enabled": true, "scripts": ["sw_power_mgmt", "sw_auto_update"]},
+    "phase4_stress": {"enabled": false},
+    "phase5_nccl": {"enabled": false},
+    "phase6_sw_install": {"enabled": true, "scripts": ["sw_os_version"]},
+    "phase7_collect": {"enabled": true, "scripts": ["collect_all_logs"]}
+  },
+  "temperature_thresholds": {
+    "gpu_idle_max": 50,
+    "gpu_load_max": 83,
+    "cpu_idle_max": 55,
+    "cpu_load_max": 100
+  }
+}

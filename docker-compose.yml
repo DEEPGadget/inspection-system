@@ -1,0 +1,93 @@
+services:
+  redis:
+    image: redis:7.2-alpine
+    ports: ["6379:6379"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 3
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: inspector
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: inspection
+    ports: ["5432:5432"]
+    volumes: ["pg_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inspector"]
+      interval: 5s
+      retries: 3
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    ports: ["8000:8000"]
+    env_file: .env
+    depends_on:
+      redis: { condition: service_healthy }
+      db: { condition: service_healthy }
+    volumes:
+      - inspection_results:/srv/inspection/results
+      - inspection_logs:/srv/inspection/logs
+      - ./checks:/srv/inspection/checks:ro
+
+  worker_inspect:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    command: celery -A workers.app worker -Q q_inspect -c 4 --loglevel=info
+    env_file: .env
+    depends_on:
+      redis: { condition: service_healthy }
+      db: { condition: service_healthy }
+    volumes:
+      - inspection_results:/srv/inspection/results
+      - inspection_logs:/srv/inspection/logs
+      - ./checks:/srv/inspection/checks:ro
+      - ssh_keys:/etc/inspection/ssh_keys:ro
+
+  worker_validate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    command: celery -A workers.app worker -Q q_validate -c 2 --loglevel=info
+    env_file: .env
+    depends_on:
+      redis: { condition: service_healthy }
+
+  worker_report:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    command: celery -A workers.app worker -Q q_report -c 2 --loglevel=info
+    env_file: .env
+    depends_on:
+      redis: { condition: service_healthy }
+    volumes:
+      - inspection_results:/srv/inspection/results
+
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    command: celery -A workers.app flower --port=5555
+    ports: ["5555:5555"]
+    env_file: .env
+    depends_on:
+      redis: { condition: service_healthy }
+
+volumes:
+  redis_data:
+  pg_data:
+  inspection_results:
+  inspection_logs:
+  ssh_keys:

@@ -1,0 +1,40 @@
+[project]
+name = "inspection-system"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "celery[redis]>=5.4",
+    "redis>=5.0",
+    "asyncssh>=2.17",
+    "anthropic>=0.40",
+    "sqlalchemy>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic-settings>=2.5",
+    "structlog>=24.4",
+    "weasyprint>=62",
+    "openpyxl>=3.1",
+    "jinja2>=3.1",
+    "websockets>=13",
+    "tenacity>=9.0",
+    "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "shellcheck-py>=0.10",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
