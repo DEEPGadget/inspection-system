@@ -11,12 +11,21 @@
       "scripts": ["sw_power_mgmt", "sw_auto_update"]
     },
     "phase4_stress": {
-      "enabled": false,
-      "scripts": []
+      "enabled": true,
+      "scripts": ["stress_gpu", "stress_cpu"],
+      "env": {
+        "GPU_BURNIN_DURATION": "300",
+        "CPU_BURNIN_DURATION": "120"
+      }
     },
     "phase5_nccl": {
-      "enabled": false,
-      "scripts": []
+      "enabled": true,
+      "scripts": ["nccl_bandwidth"],
+      "env": {
+        "NCCL_ALLREDUCE_MIN_BW_2GPU": "30",
+        "NCCL_ALLREDUCE_MIN_BW_4GPU": "5",
+        "NCCL_TEST_SIZE": "1G"
+      }
     },
     "phase6_sw_install": {
       "enabled": true,

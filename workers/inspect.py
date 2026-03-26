@@ -152,6 +152,7 @@ async def _async_inspect(
                     continue
 
                 scripts: list[str] = phase_cfg.get("scripts", [])
+                phase_env: dict[str, str] = phase_cfg.get("env", {})
                 for script_name in scripts:
                     local_script = _script_path(phase_dir, script_name)
                     if not local_script.exists():
@@ -164,7 +165,7 @@ async def _async_inspect(
                         continue
 
                     log.info("script.run", script=script_name, phase=phase_dir)
-                    result = await _run_script_over_ssh(conn, local_script, remote_tmp)
+                    result = await _run_script_over_ssh(conn, local_script, remote_tmp, env=phase_env)
 
                     # stdout → JSON 파싱
                     stdout = result.stdout.strip() if result.stdout else ""
