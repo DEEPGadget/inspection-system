@@ -11,6 +11,12 @@ import pytest
 from workers.validate import _build_user_message, _parse_claude_response
 
 
+@pytest.fixture(autouse=True)
+def mock_publish(monkeypatch):
+    """publish_job_status는 Redis 연결이 필요 — 모든 테스트에서 mock."""
+    monkeypatch.setattr("workers.validate.publish_job_status", AsyncMock())
+
+
 # ---------------------------------------------------------------------------
 # 프롬프트 구성
 # ---------------------------------------------------------------------------

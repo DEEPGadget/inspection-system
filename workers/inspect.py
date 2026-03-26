@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from config.settings import settings
 from workers.app import app
+from workers.notify import publish_job_status
 
 log = structlog.get_logger(__name__)
 
@@ -128,6 +129,7 @@ async def _async_inspect(
 
     async with _SessionLocal() as session:
         await _update_job(session, job_id, status="inspecting")
+    await publish_job_status(job_id, "inspecting")
 
     # ---- SSH 접속 ----
     connect_kwargs: dict = {
@@ -212,6 +214,7 @@ async def _async_inspect(
             status="validating",
             result_path=str(raw_dir),
         )
+    await publish_job_status(job_id, "validating")
 
     from workers.validate import validate_results  # 순환 import 방지
     validate_results.apply_async(args=[job_id], queue="q_validate")
@@ -221,6 +224,7 @@ async def _async_inspect(
 async def _mark_error(job_id: str, message: str) -> None:
     async with _SessionLocal() as session:
         await _update_job(session, job_id, status="error", error_message=message[:2000])
+    await publish_job_status(job_id, "error", message[:2000])
 
 
 # ---------------------------------------------------------------------------

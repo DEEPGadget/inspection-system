@@ -16,6 +16,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from config.settings import settings
 from workers.app import app
+from workers.notify import publish_job_status
 
 log = structlog.get_logger(__name__)
 
@@ -252,6 +253,7 @@ async def _async_validate(job_id: str) -> None:
             new_status,
             error_message="; ".join(parsed.get("fail_reasons", [])) if overall == "fail" else None,
         )
+    await publish_job_status(job_id, new_status)
 
     # ── 8. pass면 report 트리거 ───────────────────────────
     if overall == "pass":
@@ -263,6 +265,7 @@ async def _async_validate(job_id: str) -> None:
 async def _mark_error(job_id: str, message: str) -> None:
     async with _SessionLocal() as session:
         await _update_job_status(session, job_id, "error", message[:2000])
+    await publish_job_status(job_id, "error", message[:2000])
 
 
 # ---------------------------------------------------------------------------
