@@ -20,25 +20,26 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # ── ENUM 타입 ──────────────────────────────────────────
-    job_status = postgresql.ENUM(
-        "pending",
-        "inspecting",
-        "validating",
-        "reporting",
-        "pass",
-        "fail",
-        "error",
-        name="job_status",
+    # ── ENUM 타입 (idempotent) ─────────────────────────────
+    op.execute(
+        """
+        DO $$ BEGIN
+            CREATE TYPE job_status AS ENUM (
+                'pending', 'inspecting', 'validating', 'reporting',
+                'pass', 'fail', 'error'
+            );
+        EXCEPTION WHEN duplicate_object THEN null;
+        END $$
+        """
     )
-    check_status = postgresql.ENUM(
-        "pass",
-        "fail",
-        "warn",
-        name="check_status",
+    op.execute(
+        """
+        DO $$ BEGIN
+            CREATE TYPE check_status AS ENUM ('pass', 'fail', 'warn');
+        EXCEPTION WHEN duplicate_object THEN null;
+        END $$
+        """
     )
-    job_status.create(op.get_bind(), checkfirst=True)
-    check_status.create(op.get_bind(), checkfirst=True)
 
     # ── jobs ──────────────────────────────────────────────
     op.create_table(
@@ -46,7 +47,7 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
             "status",
-            sa.Enum(
+            postgresql.ENUM(
                 "pending",
                 "inspecting",
                 "validating",
@@ -94,7 +95,7 @@ def upgrade() -> None:
         sa.Column("check_name", sa.String(128), nullable=False),
         sa.Column(
             "status",
-            sa.Enum("pass", "fail", "warn", name="check_status", create_type=False),
+            postgresql.ENUM("pass", "fail", "warn", name="check_status", create_type=False),
             nullable=False,
         ),
         sa.Column("detail", sa.Text, nullable=False, server_default=""),
