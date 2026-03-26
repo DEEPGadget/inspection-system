@@ -1,0 +1,137 @@
+\documentclass[a4paper,10pt]{article}
+\usepackage[top=20mm,bottom=20mm,left=15mm,right=15mm]{geometry}
+\usepackage{fontspec}
+\usepackage{xeCJK}
+\setCJKmainfont{Noto Sans CJK KR}
+\setmainfont{Latin Modern Roman}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{fancyhdr}
+\usepackage{parskip}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{headerblue}{HTML}{1A3A5C}
+\definecolor{passbg}{HTML}{D4EDDA}
+\definecolor{passtext}{HTML}{155724}
+\definecolor{failbg}{HTML}{F8D7DA}
+\definecolor{failtext}{HTML}{721C24}
+\definecolor{warnbg}{HTML}{FFF3CD}
+\definecolor{warntext}{HTML}{856404}
+\definecolor{summarybg}{HTML}{E8F4F8}
+\definecolor{rowgray}{HTML}{F8F9FA}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0pt}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+
+\begin{document}
+
+%% ── 헤더 ──────────────────────────────────────────────────────────────────
+\noindent
+\begin{minipage}[t]{0.68\textwidth}
+  {\large\bfseries\color{headerblue} GPU 서버 검수 리포트}\\[3pt]
+  {\small\color{gray} Server Inspection Report}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.28\textwidth}
+  \raggedleft
+  \BLOCK{if overall == "pass"}
+    \colorbox{passbg}{\color{passtext}\bfseries\large\enspace PASS\enspace}
+  \BLOCK{elif overall == "fail"}
+    \colorbox{failbg}{\color{failtext}\bfseries\large\enspace FAIL\enspace}
+  \BLOCK{else}
+    \colorbox{warnbg}{\color{warntext}\bfseries\large\enspace ERROR\enspace}
+  \BLOCK{endif}
+\end{minipage}
+
+\medskip\noindent\rule{\textwidth}{0.4pt}\medskip
+
+%% ── 기본 정보 ──────────────────────────────────────────────────────────────
+{\bfseries\color{headerblue} 기본 정보}
+
+\smallskip
+\begin{tabular}{@{}lp{0.72\textwidth}@{}}
+  \textbf{Job ID}          & \VAR{job_id | latex_escape} \\[2pt]
+  \textbf{대상 서버}       & \VAR{target_host | latex_escape} \\[2pt]
+  \textbf{접속 유저}       & \VAR{target_user | latex_escape} \\[2pt]
+  \textbf{제품 프로파일}   & \VAR{product_profile | latex_escape} \\[2pt]
+  \textbf{검수 시작}       & \VAR{created_at | latex_escape} \\[2pt]
+  \textbf{리포트 생성}     & \VAR{generated_at | latex_escape} \\
+\end{tabular}
+
+\medskip
+{\bfseries\color{headerblue} 판정 결과}
+
+\BLOCK{if fail_reasons}
+\smallskip
+\noindent\colorbox{failbg}{\parbox{\dimexpr\textwidth-2\fboxsep\relax}{%
+  \color{failtext}\bfseries FAIL 사유\\[-4pt]
+  \normalfont\color{black}\small
+  \begin{itemize}\setlength{\itemsep}{1pt}\setlength{\parskip}{0pt}
+  \BLOCK{for r in fail_reasons}
+    \item \VAR{r | latex_escape}
+  \BLOCK{endfor}
+  \end{itemize}
+}}
+\BLOCK{endif}
+
+\BLOCK{if warn_reasons}
+\smallskip
+\noindent\colorbox{warnbg}{\parbox{\dimexpr\textwidth-2\fboxsep\relax}{%
+  \color{warntext}\bfseries 주의 사항\\[-4pt]
+  \normalfont\color{black}\small
+  \begin{itemize}\setlength{\itemsep}{1pt}\setlength{\parskip}{0pt}
+  \BLOCK{for r in warn_reasons}
+    \item \VAR{r | latex_escape}
+  \BLOCK{endfor}
+  \end{itemize}
+}}
+\BLOCK{endif}
+
+\BLOCK{if summary}
+\smallskip
+\noindent\colorbox{summarybg}{\parbox{\dimexpr\textwidth-2\fboxsep\relax}{%
+  \small \VAR{summary | latex_escape}
+}}
+\BLOCK{endif}
+
+\medskip
+{\bfseries\color{headerblue} 검수 항목 상세}
+
+\smallskip
+\begin{longtable}{>{\small}p{0.20\textwidth}>{\small\centering}p{0.07\textwidth}>{\small}p{0.30\textwidth}>{\small}p{0.33\textwidth}}
+  \rowcolor{headerblue}
+  \textcolor{white}{\bfseries 스크립트} &
+  \textcolor{white}{\bfseries 상태} &
+  \textcolor{white}{\bfseries Claude 판정} &
+  \textcolor{white}{\bfseries 상세} \tabularnewline
+  \endfirsthead
+  \rowcolor{headerblue}
+  \textcolor{white}{\bfseries 스크립트} &
+  \textcolor{white}{\bfseries 상태} &
+  \textcolor{white}{\bfseries Claude 판정} &
+  \textcolor{white}{\bfseries 상세} \tabularnewline
+  \endhead
+\BLOCK{for cr in check_results}
+  \VAR{cr.check_name | latex_escape} &
+  \BLOCK{if cr.status == "pass"}%
+    \textcolor{passtext}{\bfseries PASS}%
+  \BLOCK{elif cr.status == "fail"}%
+    \textcolor{failtext}{\bfseries FAIL}%
+  \BLOCK{else}%
+    \textcolor{warntext}{\bfseries WARN}%
+  \BLOCK{endif} &
+  \VAR{(cr.claude_verdict or "\textemdash") | latex_escape} &
+  \VAR{cr.detail | latex_escape} \tabularnewline
+  \hline
+\BLOCK{endfor}
+\end{longtable}
+
+\end{document}

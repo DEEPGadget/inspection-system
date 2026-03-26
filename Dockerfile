@@ -11,5 +11,10 @@ COPY . .
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM base AS worker
-RUN pip install --no-cache-dir weasyprint
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    texlive-xetex \
+    texlive-latex-recommended \
+    texlive-fonts-recommended \
+    fonts-noto-cjk && \
+    rm -rf /var/lib/apt/lists/*
 COPY . .
