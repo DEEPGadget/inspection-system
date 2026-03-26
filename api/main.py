@@ -2,16 +2,17 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
+from api.database import Base, engine
 from api.routers import jobs, reports
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # startup: DB 연결 등
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     yield
-    # shutdown: 정리
+    await engine.dispose()
 
 
 app = FastAPI(title="Server Inspection System", version="0.1.0", lifespan=lifespan)
