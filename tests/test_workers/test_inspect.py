@@ -122,8 +122,6 @@ def test_parse_warn_status():
 @pytest.mark.asyncio
 async def test_async_inspect_success(tmp_path, monkeypatch):
     """SSH 성공 시나리오 — DB와 SSH를 mock하고 NFS 파일 생성 확인."""
-    import asyncssh
-
     job_id = str(uuid.uuid4())
     monkeypatch.setattr("workers.inspect.settings.nfs_base_path", str(tmp_path))
     monkeypatch.setattr("workers.inspect.settings.ssh_key_dir", str(tmp_path / "keys"))
