@@ -2,6 +2,7 @@
 Reports API 테스트.
 DB는 dependency_overrides로 mock, 파일 I/O는 tmp_path 사용.
 """
+
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,6 +25,7 @@ def _make_report(job_id: str, pdf_path: str | None = None, xlsx_path: str | None
 
 def _make_client(mock_session):
     """dependency_overrides를 설정한 AsyncClient context manager 반환."""
+
     async def _override():
         yield mock_session
 

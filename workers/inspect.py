@@ -2,6 +2,7 @@
 q_inspect worker — SSH 접속 후 검수 스크립트 실행, 결과를 NFS + DB에 저장.
 Celery task(sync) 내부에서 asyncio.run()으로 asyncssh 구동.
 """
+
 import asyncio
 import json
 import uuid
@@ -29,6 +30,7 @@ _SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commi
 # 헬퍼
 # ---------------------------------------------------------------------------
 
+
 def _profile_path(profile_name: str) -> Path:
     base = Path(__file__).parent.parent / "checks" / "profiles"
     return base / f"{profile_name}.json"
@@ -55,6 +57,7 @@ def _ssh_key_path(target_host: str) -> str | None:
 # ---------------------------------------------------------------------------
 # async 핵심 로직
 # ---------------------------------------------------------------------------
+
 
 async def _update_job(session: AsyncSession, job_id: str, **kwargs) -> None:
     from api.models import Job  # 순환 import 방지
@@ -152,19 +155,26 @@ async def _async_inspect(
                     continue
 
                 scripts: list[str] = phase_cfg.get("scripts", [])
+                phase_env: dict[str, str] = phase_cfg.get("env", {})
                 for script_name in scripts:
                     local_script = _script_path(phase_dir, script_name)
                     if not local_script.exists():
                         log.warning("script.missing", script=str(local_script))
                         async with _SessionLocal() as session:
                             await _save_check_result(
-                                session, job_id, script_name, "warn",
-                                f"script not found: {local_script.name}", {}
+                                session,
+                                job_id,
+                                script_name,
+                                "warn",
+                                f"script not found: {local_script.name}",
+                                {},
                             )
                         continue
 
                     log.info("script.run", script=script_name, phase=phase_dir)
-                    result = await _run_script_over_ssh(conn, local_script, remote_tmp)
+                    result = await _run_script_over_ssh(
+                        conn, local_script, remote_tmp, env=phase_env
+                    )
 
                     # stdout → JSON 파싱
                     stdout = result.stdout.strip() if result.stdout else ""
@@ -208,12 +218,14 @@ async def _async_inspect(
     # ---- 검수 완료 → validate 트리거 ----
     async with _SessionLocal() as session:
         await _update_job(
-            session, job_id,
+            session,
+            job_id,
             status="validating",
             result_path=str(raw_dir),
         )
 
     from workers.validate import validate_results  # 순환 import 방지
+
     validate_results.apply_async(args=[job_id], queue="q_validate")
     log.info("inspect.done", job_id=job_id)
 
@@ -226,6 +238,7 @@ async def _mark_error(job_id: str, message: str) -> None:
 # ---------------------------------------------------------------------------
 # Celery Task
 # ---------------------------------------------------------------------------
+
 
 @app.task(
     bind=True,

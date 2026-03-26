@@ -32,7 +32,13 @@ class Job(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     status: Mapped[str] = mapped_column(
         Enum(
-            "pending", "inspecting", "validating", "reporting", "pass", "fail", "error",
+            "pending",
+            "inspecting",
+            "validating",
+            "reporting",
+            "pass",
+            "fail",
+            "error",
             name="job_status",
         ),
         nullable=False,

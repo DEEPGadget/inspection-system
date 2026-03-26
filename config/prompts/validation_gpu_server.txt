@@ -35,6 +35,26 @@
 - OS 버전이 지원 목록에 없으면 → WARN (FAIL 아님)
 - 커널 5.4 미만 → WARN
 
+### GPU 스트레스 (stress_gpu)
+- peak_temp_c > 87 → FAIL
+- slowdown_hw > 0 (HW 열 스로틀) → FAIL
+- ecc_delta_uncorr > 0 (ECC uncorrected 증가) → FAIL
+- avg_util_pct >= 80 이면서 power_ratio_pct < 70 (풀로드 저전력 = VRM/PSU 이상) → FAIL
+- slowdown_sw > 0 또는 slowdown_pwr > 0 → WARN
+- ecc_delta_corr > 0 (ECC corrected 증가) → WARN
+- avg_util_pct < 80 (스트레스 도구 있는데 낮은 Utilization) → WARN
+- 스트레스 도구 없음 또는 stress_tool_exited_early → WARN
+
+### CPU 스트레스 (stress_cpu)
+- peak_temp_c > 100 → FAIL
+- throttle_sample_count > 0 (주파수 스로틀 감지) → WARN
+- avg_util_pct < 80 (스트레스 도구 있는데 낮은 Utilization) → WARN
+
+### NCCL 대역폭 (nccl_bandwidth)
+- bw_2gpu_gbs < NCCL_ALLREDUCE_MIN_BW_2GPU (기본 30 GB/s) → FAIL (NVLink 대역폭 미달)
+- bw_4gpu_gbs < NCCL_ALLREDUCE_MIN_BW_4GPU (기본 5 GB/s) → FAIL (AllReduce 대역폭 미달)
+- nccl-tests 바이너리 없음 또는 GPU 1개 이하 → WARN
+
 ### 로그
 - MCE 이벤트 존재 → WARN
 - GPU XID 오류 존재 → WARN

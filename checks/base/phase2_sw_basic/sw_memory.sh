@@ -17,7 +17,6 @@ DETAILS+=("total_gb=${TOTAL_GB}" "available_gb=${FREE_GB}")
 
 # ── 스왑 ────────────────────────────────────────────────
 SWAP_TOTAL_KB=$(grep "^SwapTotal:" /proc/meminfo | awk '{print $2}')
-SWAP_FREE_KB=$(grep  "^SwapFree:"  /proc/meminfo | awk '{print $2}')
 SWAP_TOTAL_GB=$(awk "BEGIN {printf \"%.0f\", $SWAP_TOTAL_KB/1024/1024}")
 DETAILS+=("swap_total_gb=${SWAP_TOTAL_GB}")
 
@@ -25,16 +24,12 @@ DETAILS+=("swap_total_gb=${SWAP_TOTAL_GB}")
 if command -v dmidecode &>/dev/null; then
     DIMM_COUNT=$(dmidecode -t memory 2>/dev/null | grep -c "Size:.*[0-9].*GB" || true)
     DIMM_COUNT="${DIMM_COUNT:-0}"
-    DIMM_INFO=$(dmidecode -t memory 2>/dev/null \
-        | grep -E "^\s+Size:|^\s+Speed:|^\s+Type:" \
-        | grep -v "No Module" | head -20 \
-        | tr -d '\t' | tr '\n' ',' | sed 's/,$//' || echo "")
     [[ -n "$DIMM_COUNT" ]] && DETAILS+=("dimm_populated=${DIMM_COUNT}")
 fi
 
 # ── NUMA 토폴로지 ────────────────────────────────────────
 if [[ -d /sys/devices/system/node ]]; then
-    NUMA_NODES=$(ls /sys/devices/system/node/ 2>/dev/null | grep -c "^node[0-9]" || true)
+    NUMA_NODES=$(find /sys/devices/system/node/ -maxdepth 1 -name "node[0-9]*" 2>/dev/null | wc -l || true)
     NUMA_NODES="${NUMA_NODES:-1}"
     DETAILS+=("numa_nodes=${NUMA_NODES}")
 fi

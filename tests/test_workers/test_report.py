@@ -2,9 +2,9 @@
 Report Worker 유닛 테스트.
 DB·WeasyPrint·openpyxl은 mock — 렌더링 컨텍스트 구성, 상태 전이, 에러 경로 검증.
 """
+
 import json
 import uuid
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,6 +13,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # _render_xlsx — 실제 openpyxl 호출 (파일 I/O 없이 메모리에서 검증)
 # ---------------------------------------------------------------------------
+
 
 def _make_context(overall: str = "pass") -> dict:
     return {
@@ -50,6 +51,7 @@ def test_render_xlsx_sheets(tmp_path):
     _render_xlsx(_make_context("pass"), out)
 
     import openpyxl
+
     wb = openpyxl.load_workbook(str(out))
     assert "요약" in wb.sheetnames
     assert "검수 상세" in wb.sheetnames
@@ -62,6 +64,7 @@ def test_render_xlsx_summary_verdict(tmp_path):
     _render_xlsx(_make_context("fail"), out)
 
     import openpyxl
+
     wb = openpyxl.load_workbook(str(out))
     ws = wb["요약"]
     values = [ws.cell(row=r, column=2).value for r in range(1, 8)]
@@ -76,6 +79,7 @@ def test_render_xlsx_detail_rows(tmp_path):
     _render_xlsx(ctx, out)
 
     import openpyxl
+
     wb = openpyxl.load_workbook(str(out))
     ws = wb["검수 상세"]
     # 헤더(1) + 검수 항목(2)
@@ -90,6 +94,7 @@ def test_render_xlsx_fail_reasons(tmp_path):
     _render_xlsx(_make_context("fail"), out)
 
     import openpyxl
+
     wb = openpyxl.load_workbook(str(out))
     ws = wb["요약"]
     all_values = [ws.cell(row=r, column=2).value for r in range(1, ws.max_row + 1)]
@@ -99,6 +104,7 @@ def test_render_xlsx_fail_reasons(tmp_path):
 # ---------------------------------------------------------------------------
 # _render_pdf — xelatex 호출 검증 (실제 컴파일 없이 mock)
 # ---------------------------------------------------------------------------
+
 
 def test_render_pdf_calls_xelatex(tmp_path):
     from workers.report import _render_pdf
@@ -142,6 +148,7 @@ def test_render_pdf_template_renders_without_error(tmp_path):
 # _async_generate_report — DB·NFS·렌더러 모두 mock하여 흐름 검증
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_async_generate_report_pass_flow(tmp_path):
     """pass 흐름: verdict 로드 → 렌더링 → DB 저장 → status=pass."""
@@ -180,6 +187,7 @@ async def test_async_generate_report_pass_flow(tmp_path):
         mock_load.return_value = (fake_job, [])
 
         from workers.report import _async_generate_report
+
         await _async_generate_report(job_id)
 
     mock_pdf.assert_called_once()
@@ -213,5 +221,6 @@ async def test_async_generate_report_missing_verdict(tmp_path):
         mock_load.return_value = (fake_job, [])
 
         from workers.report import _async_generate_report
+
         with pytest.raises(FileNotFoundError):
             await _async_generate_report(job_id)

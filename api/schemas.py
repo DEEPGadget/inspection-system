@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 # --- Job ---
 
+
 class JobCreate(BaseModel):
     target_host: str = Field(..., description="검수 대상 서버 IP 또는 호스트명")
     target_user: str = Field("root", description="SSH 접속 유저")
@@ -29,6 +30,7 @@ class JobResponse(BaseModel):
 
 # --- CheckResult ---
 
+
 class CheckResultResponse(BaseModel):
     id: uuid.UUID
     job_id: uuid.UUID
@@ -44,6 +46,7 @@ class CheckResultResponse(BaseModel):
 
 # --- Report ---
 
+
 class ReportResponse(BaseModel):
     id: uuid.UUID
     job_id: uuid.UUID
@@ -55,6 +58,7 @@ class ReportResponse(BaseModel):
 
 
 # --- Job detail (with relations) ---
+
 
 class JobDetailResponse(JobResponse):
     check_results: list[CheckResultResponse] = []

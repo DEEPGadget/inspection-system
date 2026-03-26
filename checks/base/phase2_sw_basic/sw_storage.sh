@@ -34,7 +34,6 @@ elif [[ "${ROOT_USE:-0}" -gt 80 ]]; then
 fi
 
 # ── NVMe 헬스 (nvme-cli) ────────────────────────────────
-NVME_FAIL=0
 if command -v nvme &>/dev/null; then
     for dev in $(lsblk -dno NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}' | grep "^nvme"); do
         SMART_RAW=$(nvme smart-log "/dev/${dev}" 2>/dev/null || true)
@@ -48,7 +47,6 @@ if command -v nvme &>/dev/null; then
             if [[ "$CRITICAL" -ne 0 || "${AVAIL:-100}" -lt 10 ]]; then
                 STATUS="fail"
                 DETAILS+=("FAIL:nvme_${dev}_health_critical")
-                NVME_FAIL=1
             elif [[ "${WEAR:-0}" -gt 80 ]]; then
                 [[ "$STATUS" == "pass" ]] && STATUS="warn"
                 DETAILS+=("WARN:nvme_${dev}_wear_high")
