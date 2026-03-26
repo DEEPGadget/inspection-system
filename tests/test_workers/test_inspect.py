@@ -13,6 +13,12 @@ import pytest
 from workers.inspect import _nfs_raw_dir, _profile_path, _script_path, _ssh_key_path
 
 
+@pytest.fixture(autouse=True)
+def mock_publish(monkeypatch):
+    """publish_job_status는 Redis 연결이 필요 — 모든 테스트에서 mock."""
+    monkeypatch.setattr("workers.inspect.publish_job_status", AsyncMock())
+
+
 # ---------------------------------------------------------------------------
 # 경로 헬퍼 테스트
 # ---------------------------------------------------------------------------

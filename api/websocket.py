@@ -1,0 +1,105 @@
+"""
+WebSocket endpoint — Job 상태 실시간 push.
+
+연결 흐름:
+  1. 접속 시 현재 DB 상태 즉시 전송
+  2. terminal 상태(pass/fail/error)면 즉시 close
+  3. 진행 중이면 Redis pub/sub 구독
+  4. 구독 후 DB 재확인 — subscribe 직전 race window에서 발생한 terminal 전이 감지
+  5. terminal 메시지 수신 또는 클라이언트 disconnect 시 종료
+"""
+
+import json
+import uuid
+
+import redis.asyncio as aioredis
+import structlog
+from fastapi import APIRouter
+from fastapi.websockets import WebSocketDisconnect
+from sqlalchemy import select
+from starlette.websockets import WebSocket
+
+from api.database import AsyncSessionLocal
+from api.models import Job
+from config.settings import settings
+
+log = structlog.get_logger(__name__)
+router = APIRouter()
+
+_TERMINAL = frozenset({"pass", "fail", "error"})
+
+
+@router.websocket("/jobs/{job_id}")
+async def ws_job_status(websocket: WebSocket, job_id: str) -> None:
+    """Job 상태 변경 실시간 스트림."""
+    try:
+        uid = uuid.UUID(job_id)
+    except ValueError:
+        await websocket.close(code=1008)
+        return
+
+    # 정규화된 UUID 문자열 사용 — 대소문자/중괄호/하이픈 등 다양한 입력 형태를
+    # 동일한 Redis 채널명과 payload job_id로 통일 (workers가 publish하는 형식과 일치)
+    job_id = str(uid)
+
+    await websocket.accept()
+    log.info("ws.connected", job_id=job_id)
+
+    # ── 현재 상태 조회 (short-lived session) ──────────────────────────────
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Job).where(Job.id == uid))
+        job = result.scalar_one_or_none()
+
+    if job is None:
+        await websocket.send_json({"error": "Job not found", "job_id": job_id})
+        await websocket.close(code=1008)
+        return
+
+    initial = {
+        "job_id": job_id,
+        "status": job.status,
+        "ts": job.updated_at.isoformat(),
+    }
+    await websocket.send_json(initial)
+
+    if job.status in _TERMINAL:
+        await websocket.close()
+        return
+
+    # ── Redis pub/sub 구독 ─────────────────────────────────────────────────
+    r = aioredis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        async with r.pubsub() as pubsub:
+            await pubsub.subscribe(f"job:{job_id}")
+
+            # ── 구독 후 DB 재확인 (race window 닫기) ──────────────────────
+            # subscribe 완료 전에 terminal 전이가 발생했다면 Redis 메시지는
+            # 이미 drop됐으므로, DB에서 최신 상태를 다시 읽어 즉시 전송한다.
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(Job).where(Job.id == uid))
+                refreshed = result.scalar_one_or_none()
+
+            if refreshed is not None and refreshed.status in _TERMINAL:
+                reconciled = {
+                    "job_id": job_id,
+                    "status": refreshed.status,
+                    "ts": refreshed.updated_at.isoformat(),
+                }
+                await websocket.send_json(reconciled)
+                await websocket.close()
+                return
+
+            try:
+                async for message in pubsub.listen():
+                    if message["type"] != "message":
+                        continue
+                    await websocket.send_text(message["data"])
+                    data = json.loads(message["data"])
+                    if data.get("status") in _TERMINAL:
+                        await websocket.close()
+                        break
+            except WebSocketDisconnect:
+                log.info("ws.disconnected", job_id=job_id)
+    finally:
+        await r.aclose()
+        log.info("ws.closed", job_id=job_id)

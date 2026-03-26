@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from config.settings import settings
 from workers.app import app
+from workers.notify import publish_job_status
 
 log = structlog.get_logger(__name__)
 
@@ -308,6 +309,7 @@ async def _async_generate_report(job_id: str) -> None:
     # ── 7. Job.status → "pass" ────────────────────────────
     async with _SessionLocal() as session:
         await _update_job_status(session, job_id, "pass")
+    await publish_job_status(job_id, "pass")
 
     log.info("report.complete", job_id=job_id)
 
@@ -315,6 +317,7 @@ async def _async_generate_report(job_id: str) -> None:
 async def _mark_error(job_id: str, message: str) -> None:
     async with _SessionLocal() as session:
         await _update_job_status(session, job_id, "error", message[:2000])
+    await publish_job_status(job_id, "error", message[:2000])
 
 
 # ---------------------------------------------------------------------------

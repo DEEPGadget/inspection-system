@@ -179,6 +179,7 @@ async def test_async_generate_report_pass_flow(tmp_path):
         patch("workers.report._load_job_and_results", new_callable=AsyncMock) as mock_load,
         patch("workers.report._save_report_record", new_callable=AsyncMock) as mock_save,
         patch("workers.report._update_job_status", new_callable=AsyncMock) as mock_update,
+        patch("workers.report.publish_job_status", new_callable=AsyncMock),
         patch("workers.report._render_pdf") as mock_pdf,
         patch("workers.report._render_xlsx") as mock_xlsx,
         patch("workers.report._SessionLocal"),

@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.database import Base, engine
 from api.routers import jobs, reports
+from api import websocket
 
 
 @asynccontextmanager
@@ -26,6 +27,7 @@ app.add_middleware(
 
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
+app.include_router(websocket.router, prefix="/ws", tags=["websocket"])
 
 
 @app.get("/health")
