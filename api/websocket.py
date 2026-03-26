@@ -38,6 +38,10 @@ async def ws_job_status(websocket: WebSocket, job_id: str) -> None:
         await websocket.close(code=1008)
         return
 
+    # 정규화된 UUID 문자열 사용 — 대소문자/중괄호/하이픈 등 다양한 입력 형태를
+    # 동일한 Redis 채널명과 payload job_id로 통일 (workers가 publish하는 형식과 일치)
+    job_id = str(uid)
+
     await websocket.accept()
     log.info("ws.connected", job_id=job_id)
 
