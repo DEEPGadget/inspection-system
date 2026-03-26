@@ -4,8 +4,9 @@ WebSocket endpoint — Job 상태 실시간 push.
 연결 흐름:
   1. 접속 시 현재 DB 상태 즉시 전송
   2. terminal 상태(pass/fail/error)면 즉시 close
-  3. 진행 중이면 Redis pub/sub 구독 → 상태 변경 메시지 forwarding
-  4. terminal 메시지 수신 또는 클라이언트 disconnect 시 종료
+  3. 진행 중이면 Redis pub/sub 구독
+  4. 구독 후 DB 재확인 — subscribe 직전 race window에서 발생한 terminal 전이 감지
+  5. terminal 메시지 수신 또는 클라이언트 disconnect 시 종료
 """
 
 import json
@@ -66,6 +67,24 @@ async def ws_job_status(websocket: WebSocket, job_id: str) -> None:
     try:
         async with r.pubsub() as pubsub:
             await pubsub.subscribe(f"job:{job_id}")
+
+            # ── 구독 후 DB 재확인 (race window 닫기) ──────────────────────
+            # subscribe 완료 전에 terminal 전이가 발생했다면 Redis 메시지는
+            # 이미 drop됐으므로, DB에서 최신 상태를 다시 읽어 즉시 전송한다.
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(Job).where(Job.id == uid))
+                refreshed = result.scalar_one_or_none()
+
+            if refreshed is not None and refreshed.status in _TERMINAL:
+                reconciled = {
+                    "job_id": job_id,
+                    "status": refreshed.status,
+                    "ts": refreshed.updated_at.isoformat(),
+                }
+                await websocket.send_json(reconciled)
+                await websocket.close()
+                return
+
             try:
                 async for message in pubsub.listen():
                     if message["type"] != "message":
