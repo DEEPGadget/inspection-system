@@ -2,6 +2,7 @@
 Inspect Worker 유닛 테스트.
 SSH와 DB는 mock — 비즈니스 로직(프로파일 로드, JSON 파싱, 경로 계산)만 검증.
 """
+
 import json
 import uuid
 from pathlib import Path
@@ -15,6 +16,7 @@ from workers.inspect import _nfs_raw_dir, _profile_path, _script_path, _ssh_key_
 # ---------------------------------------------------------------------------
 # 경로 헬퍼 테스트
 # ---------------------------------------------------------------------------
+
 
 def test_nfs_raw_dir(tmp_path, monkeypatch):
     monkeypatch.setattr("workers.inspect.settings.nfs_base_path", str(tmp_path))
@@ -58,6 +60,7 @@ def test_ssh_key_path_none(tmp_path, monkeypatch):
 # 프로파일 로드 테스트
 # ---------------------------------------------------------------------------
 
+
 def test_profile_loads_default():
     p = _profile_path("default")
     assert p.exists(), "default.json 프로파일이 없습니다"
@@ -70,6 +73,7 @@ def test_profile_loads_default():
 def test_profile_missing_raises(tmp_path, monkeypatch):
     """존재하지 않는 프로파일은 FileNotFoundError."""
     from workers.inspect import _profile_path as pp
+
     p = pp("nonexistent_profile")
     assert not p.exists()
 
@@ -77,6 +81,7 @@ def test_profile_missing_raises(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # JSON 파싱 로직 테스트 (스크립트 stdout 처리)
 # ---------------------------------------------------------------------------
+
 
 def _parse_output(stdout: str, script_name: str) -> dict:
     """inspect.py 내부 파싱 로직 재현."""
@@ -113,6 +118,7 @@ def test_parse_warn_status():
 # _async_inspect 통합 테스트 (SSH + DB mock)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_async_inspect_success(tmp_path, monkeypatch):
     """SSH 성공 시나리오 — DB와 SSH를 mock하고 NFS 파일 생성 확인."""
@@ -135,7 +141,9 @@ async def test_async_inspect_success(tmp_path, monkeypatch):
     script_dir.mkdir(parents=True, exist_ok=True)
     test_script = script_dir / "sw_cpu.sh"
     if not test_script.exists():
-        test_script.write_text('#!/bin/bash\necho \'{"check":"sw_cpu","status":"pass","detail":"ok"}\'')
+        test_script.write_text(
+            '#!/bin/bash\necho \'{"check":"sw_cpu","status":"pass","detail":"ok"}\''
+        )
 
     # SSH mock
     mock_result = MagicMock()
@@ -158,9 +166,17 @@ async def test_async_inspect_success(tmp_path, monkeypatch):
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
-    mock_session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=MagicMock(
-        id=uuid.UUID(job_id), status="pending", updated_at=None,
-    ))))
+    mock_session.execute = AsyncMock(
+        return_value=MagicMock(
+            scalar_one_or_none=MagicMock(
+                return_value=MagicMock(
+                    id=uuid.UUID(job_id),
+                    status="pending",
+                    updated_at=None,
+                )
+            )
+        )
+    )
     mock_session.commit = AsyncMock()
     mock_session.add = MagicMock()
 
@@ -178,7 +194,9 @@ async def test_async_inspect_success(tmp_path, monkeypatch):
         from workers.inspect import _async_inspect
 
         # validate import를 mock하기 위해 모듈 패치
-        with patch.dict("sys.modules", {"workers.validate": MagicMock(validate_results=mock_validate)}):
+        with patch.dict(
+            "sys.modules", {"workers.validate": MagicMock(validate_results=mock_validate)}
+        ):
             try:
                 await _async_inspect(job_id, "10.0.0.1", "root", "_test_profile")
             except Exception:

@@ -3,6 +3,7 @@ nccl_bandwidth.sh 유닛 테스트.
 GPU / nccl-tests 없는 CI 환경을 가정.
 JSON 출력 규격, 조기 종료 경로(GPU 없음, 단일 GPU), mock 파싱 검증.
 """
+
 import json
 import os
 import subprocess
@@ -10,7 +11,9 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).parent.parent.parent / "checks" / "base" / "phase5_nccl" / "nccl_bandwidth.sh"
+SCRIPT = (
+    Path(__file__).parent.parent.parent / "checks" / "base" / "phase5_nccl" / "nccl_bandwidth.sh"
+)
 
 _HAS_NVIDIA = subprocess.run(["which", "nvidia-smi"], capture_output=True).returncode == 0
 
@@ -35,6 +38,7 @@ def _run(env_override: dict | None = None, timeout: int = 15) -> dict:
 # nvidia-smi 없는 환경
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(_HAS_NVIDIA, reason="nvidia-smi 있는 환경에서는 skip")
 def test_no_nvidia_smi_returns_fail():
     """nvidia-smi 없으면 즉시 fail 반환."""
@@ -58,6 +62,7 @@ def test_no_nvidia_smi_returns_fail():
 # JSON 출력 규격 (nvidia-smi 있는 환경)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(not _HAS_NVIDIA, reason="nvidia-smi 없는 환경에서는 skip")
 def test_output_schema():
     data = _run()
@@ -78,6 +83,7 @@ def test_detail_contains_gpu_count():
 # shellcheck
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(
     subprocess.run(["which", "shellcheck"], capture_output=True).returncode != 0,
     reason="shellcheck 미설치",
@@ -95,6 +101,7 @@ def test_shellcheck_nccl():
 # mock 출력 파싱 — 다양한 판정 시나리오
 # ---------------------------------------------------------------------------
 
+
 def test_mock_single_gpu_warn():
     """GPU 1개 → warn (NCCL 불필요)."""
     sample = (
@@ -111,7 +118,7 @@ def test_mock_pass_2gpu():
     sample = (
         '{"check":"nccl_bandwidth","status":"pass",'
         '"detail":"gpu_count=8|min_bw_2gpu_gbs=30|min_bw_4gpu_gbs=5'
-        '|tool=/opt/nccl-tests/build/all_reduce_perf'
+        "|tool=/opt/nccl-tests/build/all_reduce_perf"
         '|bw_2gpu_gbs=42.3|bw_4gpu_gbs=8.7"}'
     )
     data = json.loads(sample)

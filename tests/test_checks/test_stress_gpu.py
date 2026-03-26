@@ -3,10 +3,10 @@ stress_gpu.sh 유닛 테스트.
 nvidia-smi / gpu_burn / dcgmi 없는 CI 환경을 가정.
 스크립트를 직접 실행하지 않고, 출력 JSON 규격과 로직 분기만 검증.
 """
+
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -37,6 +37,7 @@ def _run(env_override: dict | None = None, timeout: int = 10) -> dict:
 # nvidia-smi 없는 환경 — fail 반환
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(
     subprocess.run(["which", "nvidia-smi"], capture_output=True).returncode == 0,
     reason="nvidia-smi 있는 환경에서는 skip",
@@ -63,6 +64,7 @@ def test_no_nvidia_smi_returns_fail():
 # ---------------------------------------------------------------------------
 # JSON 출력 규격
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.skipif(
     subprocess.run(["which", "nvidia-smi"], capture_output=True).returncode != 0,
@@ -94,6 +96,7 @@ def test_detail_contains_required_fields():
 # 스크립트 문법 (shellcheck — 설치 시)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(
     subprocess.run(["which", "shellcheck"], capture_output=True).returncode != 0,
     reason="shellcheck 미설치",
@@ -111,15 +114,16 @@ def test_shellcheck_stress_gpu():
 # JSON 유효성 — 실제 실행 없이 mock 출력으로 파싱 확인
 # ---------------------------------------------------------------------------
 
+
 def test_mock_output_parsing():
     """스크립트 출력 예시가 유효한 JSON인지 확인."""
     sample = (
         '{"check":"stress_gpu","status":"warn",'
         '"detail":"gpu_count=2|tdp_w=400|tool=none|duration_s=1'
-        '|peak_temp_c=0|peak_power_w=0|power_ratio_pct=0|avg_util_pct=0'
-        '|slowdown_hw=0|slowdown_sw=0|slowdown_pwr=0'
-        '|ecc_corr_before=0|ecc_corr_after=0|ecc_delta_corr=0'
-        '|ecc_uncorr_before=0|ecc_uncorr_after=0|ecc_delta_uncorr=0'
+        "|peak_temp_c=0|peak_power_w=0|power_ratio_pct=0|avg_util_pct=0"
+        "|slowdown_hw=0|slowdown_sw=0|slowdown_pwr=0"
+        "|ecc_corr_before=0|ecc_corr_after=0|ecc_delta_corr=0"
+        "|ecc_uncorr_before=0|ecc_uncorr_after=0|ecc_delta_uncorr=0"
         '|WARN:no_stress_tool_temp_only"}'
     )
     data = json.loads(sample)
@@ -132,7 +136,7 @@ def test_fail_conditions_in_detail():
     sample = (
         '{"check":"stress_gpu","status":"fail",'
         '"detail":"tool=gpu_burn|peak_temp_c=92'
-        '|FAIL:peak_temp_over_87c(92c)'
+        "|FAIL:peak_temp_over_87c(92c)"
         '|FAIL:ecc_uncorrected_increased_by=1"}'
     )
     data = json.loads(sample)

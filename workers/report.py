@@ -2,6 +2,7 @@
 q_report worker — claude_verdict.json을 읽어 PDF + XLSX 리포트 생성, NFS 저장, DB 업데이트.
 concurrency=2 (celeryconfig).
 """
+
 import asyncio
 import json
 import shutil
@@ -28,24 +29,26 @@ _SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commi
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
+
 # LaTeX 전용 Jinja2 환경 — \BLOCK{}, \VAR{} 구문 사용 (LaTeX {} 충돌 방지)
 def _latex_escape(text: str) -> str:
     """LaTeX 특수문자 이스케이프."""
     text = str(text)
     for old, new in [
         ("\\", r"\textbackslash{}"),
-        ("&",  r"\&"),
-        ("%",  r"\%"),
-        ("$",  r"\$"),
-        ("#",  r"\#"),
-        ("_",  r"\_"),
-        ("{",  r"\{"),
-        ("}",  r"\}"),
-        ("~",  r"\textasciitilde{}"),
-        ("^",  r"\textasciicircum{}"),
+        ("&", r"\&"),
+        ("%", r"\%"),
+        ("$", r"\$"),
+        ("#", r"\#"),
+        ("_", r"\_"),
+        ("{", r"\{"),
+        ("}", r"\}"),
+        ("~", r"\textasciitilde{}"),
+        ("^", r"\textasciicircum{}"),
     ]:
         text = text.replace(old, new)
     return text
+
 
 _latex_env = Environment(
     block_start_string=r"\BLOCK{",
@@ -65,6 +68,7 @@ _latex_env.filters["latex_escape"] = _latex_escape
 # ---------------------------------------------------------------------------
 # PDF 생성
 # ---------------------------------------------------------------------------
+
 
 def _render_pdf(context: dict, output_path: Path) -> None:
     """LaTeX → xelatex 컴파일 → PDF."""
@@ -100,9 +104,9 @@ def _render_pdf(context: dict, output_path: Path) -> None:
 
 _HEADER_FILL = PatternFill("solid", fgColor="1A3A5C")
 _HEADER_FONT = Font(bold=True, color="FFFFFF")
-_PASS_FONT   = Font(bold=True, color="155724")
-_FAIL_FONT   = Font(bold=True, color="721C24")
-_WARN_FONT   = Font(bold=True, color="856404")
+_PASS_FONT = Font(bold=True, color="155724")
+_FAIL_FONT = Font(bold=True, color="721C24")
+_WARN_FONT = Font(bold=True, color="856404")
 
 _STATUS_FONT = {"pass": _PASS_FONT, "fail": _FAIL_FONT, "warn": _WARN_FONT}
 
@@ -115,13 +119,13 @@ def _render_xlsx(context: dict, output_path: Path) -> None:
     ws_summary.title = "요약"
 
     summary_rows = [
-        ("Job ID",        context["job_id"]),
-        ("대상 서버",     context["target_host"]),
-        ("접속 유저",     context["target_user"]),
+        ("Job ID", context["job_id"]),
+        ("대상 서버", context["target_host"]),
+        ("접속 유저", context["target_user"]),
         ("제품 프로파일", context["product_profile"]),
-        ("검수 시작",     context["created_at"]),
-        ("리포트 생성",   context["generated_at"]),
-        ("최종 판정",     context["overall"].upper()),
+        ("검수 시작", context["created_at"]),
+        ("리포트 생성", context["generated_at"]),
+        ("최종 판정", context["overall"].upper()),
     ]
     for row in summary_rows:
         ws_summary.append(row)
@@ -163,12 +167,14 @@ def _render_xlsx(context: dict, output_path: Path) -> None:
         cell.alignment = Alignment(horizontal="center")
 
     for cr in context["check_results"]:
-        ws_detail.append([
-            cr["check_name"],
-            cr["status"].upper(),
-            cr["claude_verdict"] or "",
-            cr["detail"],
-        ])
+        ws_detail.append(
+            [
+                cr["check_name"],
+                cr["status"].upper(),
+                cr["claude_verdict"] or "",
+                cr["detail"],
+            ]
+        )
         status_cell = ws_detail.cell(row=ws_detail.max_row, column=2)
         status_cell.font = _STATUS_FONT.get(cr["status"], Font())
         status_cell.alignment = Alignment(horizontal="center")
@@ -185,6 +191,7 @@ def _render_xlsx(context: dict, output_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # DB 헬퍼
 # ---------------------------------------------------------------------------
+
 
 async def _load_job_and_results(session: AsyncSession, job_id: str) -> tuple:
     from api.models import CheckResult, Job
@@ -240,6 +247,7 @@ async def _update_job_status(
 # 핵심 async 로직
 # ---------------------------------------------------------------------------
 
+
 async def _async_generate_report(job_id: str) -> None:
     # ── 1. DB 로드 ────────────────────────────────────────
     async with _SessionLocal() as session:
@@ -284,7 +292,7 @@ async def _async_generate_report(job_id: str) -> None:
     report_dir = Path(settings.nfs_base_path) / "results" / job_id
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    pdf_path  = report_dir / "report.pdf"
+    pdf_path = report_dir / "report.pdf"
     xlsx_path = report_dir / "report.xlsx"
 
     # ── 5. PDF + XLSX 생성 (동기 I/O — WeasyPrint 제약) ──
@@ -312,6 +320,7 @@ async def _mark_error(job_id: str, message: str) -> None:
 # ---------------------------------------------------------------------------
 # Celery Task
 # ---------------------------------------------------------------------------
+
 
 @app.task(
     bind=True,
