@@ -28,7 +28,10 @@ if ! command -v nvidia-smi &>/dev/null; then
 fi
 
 # ── GPU 수량 ─────────────────────────────────────────────
-GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l || echo "0")
+GPU_COUNT=0
+if _gpu_raw=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null); then
+    GPU_COUNT=$(echo "$_gpu_raw" | wc -l)
+fi
 DETAILS+=("gpu_count=${GPU_COUNT}")
 
 if [[ "$GPU_COUNT" -lt 2 ]]; then
@@ -68,22 +71,22 @@ run_allreduce() {
               "$ALLREDUCE_BIN" -b 1M -e "$TEST_SIZE" -f 2 -g "$ngpu" -n 20 2>/dev/null | \
               grep -E "^\s+[0-9]" | tail -1 || true)
         # 출력 컬럼: size count type redop root time algbw busbw #wrong time algbw busbw
-        # busbw: 11번째 컬럼
+        # out-of-place busbw: 8번째 컬럼
         local bw
-        bw=$(echo "$raw" | awk '{print $11}' | tr -d ' ' || echo "0")
+        bw=$(echo "$raw" | awk '{print $8}' | tr -d ' ' || echo "0")
         printf -v "$result_var" "%s" "${bw:-0}"
 
     elif python3 -c "import torch; assert torch.cuda.is_available(); import torch.distributed" 2>/dev/null; then
         # PyTorch NCCL 백업 (간이 AllReduce 측정)
         local bw
-        bw=$(CUDA_VISIBLE_DEVICES="$gpu_list" python3 - <<PYEOF 2>/dev/null
+        bw=$(CUDA_VISIBLE_DEVICES="$gpu_list" \
+             torchrun --nproc_per_node="$ngpu" --master_port=29501 - <<PYEOF 2>/dev/null
 import torch, torch.distributed as dist, time, os
-os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-os.environ.setdefault("MASTER_PORT", "29501")
-world = $ngpu
-dist.init_process_group("nccl", rank=0, world_size=1)
-dev = torch.device("cuda:0")
-buf = torch.ones(1024*1024*64, dtype=torch.float32, device=dev)  # 256 MB
+dist.init_process_group("nccl")
+rank = dist.get_rank()
+dev = torch.device(f"cuda:{rank}")
+n = dist.get_world_size()
+buf = torch.ones(1024*1024*64, dtype=torch.float32, device=dev)  # 256 MB per rank
 # warm-up
 for _ in range(3):
     dist.all_reduce(buf)
@@ -94,10 +97,10 @@ for _ in range(10):
 torch.cuda.synchronize()
 elapsed = time.perf_counter() - t0
 # busbw = 2*(n-1)/n * size / time  (allreduce bus BW formula)
-n = $ngpu
-size_gb = buf.nelement() * buf.element_size() / 1e9
-bus_bw = 2 * (n-1) / n * size_gb * 10 / elapsed
-print(f"{bus_bw:.2f}")
+if rank == 0:
+    size_gb = buf.nelement() * buf.element_size() / 1e9
+    bus_bw = 2 * (n - 1) / n * size_gb * 10 / elapsed
+    print(f"{bus_bw:.2f}")
 dist.destroy_process_group()
 PYEOF
         )
