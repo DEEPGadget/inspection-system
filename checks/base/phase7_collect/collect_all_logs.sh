@@ -7,7 +7,6 @@ set -euo pipefail
 CHECK="collect_all_logs"
 STATUS="pass"
 DETAILS=()
-ERRORS=()
 
 # ── dmesg (최근 50줄, 에러/경고만) ──────────────────────
 DMESG_ERRS=$(dmesg --level=err,crit,alert,emerg 2>/dev/null | tail -20 | wc -l || true); DMESG_ERRS="${DMESG_ERRS:-0}"

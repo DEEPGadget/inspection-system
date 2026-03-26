@@ -33,9 +33,6 @@ while IFS= read -r iface; do
         fi
     fi
 
-    # MAC
-    MAC=$(cat "/sys/class/net/${iface}/address" 2>/dev/null || echo "?")
-
     ALL_NICS+=("${iface}(${SPEED},${OPERSTATE})")
 
     if [[ "$OPERSTATE" == "up" ]]; then
