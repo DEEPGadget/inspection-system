@@ -48,7 +48,6 @@ if command -v nvme &>/dev/null; then
             if [[ "$CRITICAL" -ne 0 || "${AVAIL:-100}" -lt 10 ]]; then
                 STATUS="fail"
                 DETAILS+=("FAIL:nvme_${dev}_health_critical")
-                NVME_FAIL=1
             elif [[ "${WEAR:-0}" -gt 80 ]]; then
                 [[ "$STATUS" == "pass" ]] && STATUS="warn"
                 DETAILS+=("WARN:nvme_${dev}_wear_high")
