@@ -3,6 +3,7 @@ Job 상태 변경을 Redis pub/sub으로 발행하는 공유 헬퍼.
 channel: job:{job_id}
 payload: {"job_id": str, "status": str, "ts": ISO8601, "error_message"?: str}
 """
+
 import json
 from datetime import datetime, timezone
 

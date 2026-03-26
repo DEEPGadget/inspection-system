@@ -42,9 +42,7 @@ async def list_jobs(
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(Job).order_by(Job.created_at.desc()).offset(skip).limit(limit)
-    )
+    result = await db.execute(select(Job).order_by(Job.created_at.desc()).offset(skip).limit(limit))
     return result.scalars().all()
 
 

@@ -2,6 +2,7 @@
 WebSocket endpoint 테스트.
 DB와 Redis는 mock — 접속/상태전송/terminal close/disconnect 흐름 검증.
 """
+
 import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,6 +14,7 @@ from api.main import app
 
 
 # ── 공통 픽스처 ──────────────────────────────────────────────────────────────
+
 
 @pytest.fixture(autouse=True)
 def mock_lifespan_db():
@@ -27,6 +29,7 @@ def mock_lifespan_db():
 
 def _make_job(job_id: str, status: str):
     from datetime import datetime, timezone
+
     job = MagicMock()
     job.id = uuid.UUID(job_id)
     job.status = status
@@ -46,6 +49,7 @@ def _mock_db_session(job):
 
 
 # ── 테스트 ───────────────────────────────────────────────────────────────────
+
 
 def test_ws_invalid_uuid():
     """잘못된 UUID → 1008 close."""
@@ -104,7 +108,9 @@ def test_ws_inprogress_job_receives_update():
     fake_job = _make_job(job_id, "validating")
     mock_factory = _mock_db_session(fake_job)
 
-    terminal_msg = json.dumps({"job_id": job_id, "status": "pass", "ts": "2026-03-26T00:01:00+00:00"})
+    terminal_msg = json.dumps(
+        {"job_id": job_id, "status": "pass", "ts": "2026-03-26T00:01:00+00:00"}
+    )
 
     # Redis pub/sub mock: listen()이 terminal 메시지 하나 반환
     async def fake_listen():

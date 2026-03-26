@@ -2,6 +2,7 @@
 Validate Worker 유닛 테스트.
 Claude API와 DB는 mock — 프롬프트 구성, 파싱, 상태 전이 로직 검증.
 """
+
 import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -21,6 +22,7 @@ def mock_publish(monkeypatch):
 # 프롬프트 구성
 # ---------------------------------------------------------------------------
 
+
 def test_build_user_message_contains_host():
     msg = _build_user_message("job-1", "10.0.0.1", "gpu_server", [])
     assert "10.0.0.1" in msg
@@ -38,27 +40,35 @@ def test_build_user_message_contains_results():
 # Claude 응답 파싱
 # ---------------------------------------------------------------------------
 
-VALID_RESPONSE = json.dumps({
-    "overall": "pass",
-    "fail_reasons": [],
-    "warn_reasons": [],
-    "checks": [
-        {"name": "sw_gpu", "verdict": "pass", "reason": "8x A100, 45°C, no ECC errors"},
-        {"name": "sw_power_mgmt", "verdict": "pass", "reason": "sleep.target masked, governor=performance"},
-    ],
-    "summary": "모든 검사를 통과했습니다.",
-})
+VALID_RESPONSE = json.dumps(
+    {
+        "overall": "pass",
+        "fail_reasons": [],
+        "warn_reasons": [],
+        "checks": [
+            {"name": "sw_gpu", "verdict": "pass", "reason": "8x A100, 45°C, no ECC errors"},
+            {
+                "name": "sw_power_mgmt",
+                "verdict": "pass",
+                "reason": "sleep.target masked, governor=performance",
+            },
+        ],
+        "summary": "모든 검사를 통과했습니다.",
+    }
+)
 
-FAIL_RESPONSE = json.dumps({
-    "overall": "fail",
-    "fail_reasons": ["GPU 온도 92°C > 87°C", "sleep.target not masked"],
-    "warn_reasons": [],
-    "checks": [
-        {"name": "sw_gpu", "verdict": "fail", "reason": "온도 92°C 초과"},
-        {"name": "sw_power_mgmt", "verdict": "fail", "reason": "sleep.target masked 아님"},
-    ],
-    "summary": "GPU 과열 및 전원 관리 설정 불량으로 불합격.",
-})
+FAIL_RESPONSE = json.dumps(
+    {
+        "overall": "fail",
+        "fail_reasons": ["GPU 온도 92°C > 87°C", "sleep.target not masked"],
+        "warn_reasons": [],
+        "checks": [
+            {"name": "sw_gpu", "verdict": "fail", "reason": "온도 92°C 초과"},
+            {"name": "sw_power_mgmt", "verdict": "fail", "reason": "sleep.target masked 아님"},
+        ],
+        "summary": "GPU 과열 및 전원 관리 설정 불량으로 불합격.",
+    }
+)
 
 
 def test_parse_valid_json():
@@ -140,10 +150,14 @@ async def test_async_validate_pass_triggers_report(tmp_path, monkeypatch):
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
-    mock_session.execute = AsyncMock(return_value=MagicMock(
-        scalar_one_or_none=MagicMock(return_value=mock_job),
-        scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=MOCK_CHECK_RESULTS))),
-    ))
+    mock_session.execute = AsyncMock(
+        return_value=MagicMock(
+            scalar_one_or_none=MagicMock(return_value=mock_job),
+            scalars=MagicMock(
+                return_value=MagicMock(all=MagicMock(return_value=MOCK_CHECK_RESULTS))
+            ),
+        )
+    )
     mock_session.commit = AsyncMock()
 
     mock_report = MagicMock()
@@ -151,14 +165,17 @@ async def test_async_validate_pass_triggers_report(tmp_path, monkeypatch):
 
     with (
         patch("workers.validate._SessionLocal", MagicMock(return_value=mock_session)),
-        patch("workers.validate._load_job_and_results",
-              AsyncMock(return_value=(mock_job, MOCK_CHECK_RESULTS))),
+        patch(
+            "workers.validate._load_job_and_results",
+            AsyncMock(return_value=(mock_job, MOCK_CHECK_RESULTS)),
+        ),
         patch("workers.validate._update_check_verdicts", AsyncMock()),
         patch("workers.validate._update_job_status", AsyncMock()),
         patch("workers.validate._call_claude", AsyncMock(return_value=VALID_RESPONSE)),
         patch.dict("sys.modules", {"workers.report": MagicMock(generate_report=mock_report)}),
     ):
         from workers.validate import _async_validate
+
         await _async_validate(job_id)
 
     # NFS verdict 파일 생성 확인
@@ -180,14 +197,17 @@ async def test_async_validate_fail_no_report(tmp_path, monkeypatch):
     mock_report.apply_async = MagicMock()
 
     with (
-        patch("workers.validate._load_job_and_results",
-              AsyncMock(return_value=(mock_job, MOCK_CHECK_RESULTS))),
+        patch(
+            "workers.validate._load_job_and_results",
+            AsyncMock(return_value=(mock_job, MOCK_CHECK_RESULTS)),
+        ),
         patch("workers.validate._update_check_verdicts", AsyncMock()),
         patch("workers.validate._update_job_status", AsyncMock()),
         patch("workers.validate._call_claude", AsyncMock(return_value=FAIL_RESPONSE)),
         patch.dict("sys.modules", {"workers.report": MagicMock(generate_report=mock_report)}),
     ):
         from workers.validate import _async_validate
+
         await _async_validate(job_id)
 
     mock_report.apply_async.assert_not_called()
@@ -201,11 +221,13 @@ async def test_async_validate_no_results_marks_error(monkeypatch):
 
     update_status = AsyncMock()
     with (
-        patch("workers.validate._load_job_and_results",
-              AsyncMock(return_value=(mock_job, []))),  # 빈 결과
+        patch(
+            "workers.validate._load_job_and_results", AsyncMock(return_value=(mock_job, []))
+        ),  # 빈 결과
         patch("workers.validate._update_job_status", update_status),
     ):
         from workers.validate import _async_validate
+
         await _async_validate(job_id)
 
     update_status.assert_called_once()

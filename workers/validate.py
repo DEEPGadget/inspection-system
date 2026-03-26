@@ -2,6 +2,7 @@
 q_validate worker — NFS의 검수 결과를 Claude API로 판독, DB 업데이트 후 report 트리거.
 concurrency=2 (celeryconfig) — Claude API rate limit 대응.
 """
+
 import asyncio
 import json
 import uuid
@@ -30,6 +31,7 @@ _PROMPT_PATH = Path(__file__).parent.parent / "config" / "prompts" / "validation
 # Claude API 호출 (tenacity 재시도 — rate limit / 일시 오류 대응)
 # ---------------------------------------------------------------------------
 
+
 @retry(
     retry=retry_if_exception_type((anthropic.RateLimitError, anthropic.APIStatusError)),
     wait=wait_exponential(multiplier=2, min=4, max=60),
@@ -49,6 +51,7 @@ async def _call_claude(client: anthropic.AsyncAnthropic, user_content: str) -> s
 # ---------------------------------------------------------------------------
 # 프롬프트 구성
 # ---------------------------------------------------------------------------
+
 
 def _build_user_message(
     job_id: str,
@@ -71,6 +74,7 @@ def _build_user_message(
 # ---------------------------------------------------------------------------
 # Claude 응답 파싱
 # ---------------------------------------------------------------------------
+
 
 def _parse_claude_response(text: str) -> dict:
     """JSON 블록 추출 후 파싱. 실패 시 error 구조 반환."""
@@ -106,12 +110,11 @@ def _parse_claude_response(text: str) -> dict:
 # DB 헬퍼
 # ---------------------------------------------------------------------------
 
+
 async def _load_job_and_results(session: AsyncSession, job_id: str) -> tuple:
     from api.models import CheckResult, Job
 
-    job_result = await session.execute(
-        select(Job).where(Job.id == uuid.UUID(job_id))
-    )
+    job_result = await session.execute(select(Job).where(Job.id == uuid.UUID(job_id)))
     job = job_result.scalar_one_or_none()
     if job is None:
         raise ValueError(f"Job {job_id} not found")
@@ -164,6 +167,7 @@ async def _update_job_status(
 # ---------------------------------------------------------------------------
 # 핵심 async 로직
 # ---------------------------------------------------------------------------
+
 
 async def _async_validate(job_id: str) -> None:
     # ── 1. DB에서 Job + CheckResult 로드 ──────────────────
@@ -258,6 +262,7 @@ async def _async_validate(job_id: str) -> None:
     # ── 8. pass면 report 트리거 ───────────────────────────
     if overall == "pass":
         from workers.report import generate_report
+
         generate_report.apply_async(args=[job_id], queue="q_report")
         log.info("validate.report_triggered", job_id=job_id)
 
@@ -271,6 +276,7 @@ async def _mark_error(job_id: str, message: str) -> None:
 # ---------------------------------------------------------------------------
 # Celery Task
 # ---------------------------------------------------------------------------
+
 
 @app.task(
     bind=True,

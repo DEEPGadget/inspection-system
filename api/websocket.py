@@ -7,6 +7,7 @@ WebSocket endpoint — Job 상태 실시간 push.
   3. 진행 중이면 Redis pub/sub 구독 → 상태 변경 메시지 forwarding
   4. terminal 메시지 수신 또는 클라이언트 disconnect 시 종료
 """
+
 import json
 import uuid
 
