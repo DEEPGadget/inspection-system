@@ -1,5 +1,7 @@
 from celery import Celery
 
-app = Celery("inspection")
+app = Celery(
+    "inspection",
+    include=["workers.inspect", "workers.validate", "workers.report"],
+)
 app.config_from_object("config.celeryconfig")
-app.autodiscover_tasks(["workers"])
