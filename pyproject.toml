@@ -30,6 +30,9 @@ dev = [
     "shellcheck-py>=0.10",
 ]
 
+[tool.setuptools.packages.find]
+include = ["api*", "workers*", "config*"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
