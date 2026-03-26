@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     texlive-xetex \
     texlive-latex-recommended \
     texlive-fonts-recommended \
+    texlive-lang-cjk \
     fonts-noto-cjk && \
     rm -rf /var/lib/apt/lists/*
 COPY . .
