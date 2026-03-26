@@ -21,8 +21,12 @@ from workers.notify import publish_job_status
 
 log = structlog.get_logger(__name__)
 
-_engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
-_SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+
+def _make_session() -> tuple:
+    """매 asyncio.run() 루프마다 새 엔진+세션팩토리를 생성."""
+    engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
+    session_local = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return engine, session_local
 
 _PROMPT_PATH = Path(__file__).parent.parent / "config" / "prompts" / "validation_gpu_server.txt"
 
@@ -170,107 +174,117 @@ async def _update_job_status(
 
 
 async def _async_validate(job_id: str) -> None:
-    # ── 1. DB에서 Job + CheckResult 로드 ──────────────────
-    async with _SessionLocal() as session:
-        job, check_results = await _load_job_and_results(session, job_id)
-        target_host = job.target_host
-        product_profile = job.product_profile
+    engine, SessionLocal = _make_session()
+    try:
+        # ── 1. DB에서 Job + CheckResult 로드 ──────────────────
+        async with SessionLocal() as session:
+            job, check_results = await _load_job_and_results(session, job_id)
+            target_host = job.target_host
+            product_profile = job.product_profile
 
-    if not check_results:
-        log.warning("validate.no_results", job_id=job_id)
-        async with _SessionLocal() as session:
-            await _update_job_status(session, job_id, "error", "검수 결과 없음")
-        return
+        if not check_results:
+            log.warning("validate.no_results", job_id=job_id)
+            async with SessionLocal() as session:
+                await _update_job_status(session, job_id, "error", "검수 결과 없음")
+            return
 
-    # ── 2. 프롬프트 구성 ──────────────────────────────────
-    results_payload = [
-        {
-            "check": cr.check_name,
-            "status": cr.status,
-            "detail": cr.detail,
-            "raw": cr.raw_output,
-        }
-        for cr in check_results
-    ]
-    user_msg = _build_user_message(job_id, target_host, product_profile, results_payload)
-
-    log.info("validate.claude_call", job_id=job_id, check_count=len(check_results))
-
-    # ── 3. Claude API 호출 ────────────────────────────────
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-    raw_response = await _call_claude(client, user_msg)
-
-    log.debug("validate.claude_raw", job_id=job_id, preview=raw_response[:200])
-
-    # ── 4. 응답 파싱 ──────────────────────────────────────
-    parsed = _parse_claude_response(raw_response)
-    overall = parsed.get("overall", "error")
-
-    # ── 5. CheckResult에 verdict 기록 ─────────────────────
-    verdict_map: dict[str, tuple[str, str]] = {}
-    for ch in parsed.get("checks", []):
-        name = ch.get("name", "")
-        verdict = ch.get("verdict", "warn")
-        reason = ch.get("reason", "")
-        if name:
-            verdict_map[name] = (verdict, reason)
-
-    async with _SessionLocal() as session:
-        await _update_check_verdicts(session, job_id, verdict_map)
-
-    # ── 6. NFS에 판독 결과 저장 ───────────────────────────
-    nfs_job_dir = Path(settings.nfs_base_path) / "results" / job_id
-    nfs_job_dir.mkdir(parents=True, exist_ok=True)
-    verdict_file = nfs_job_dir / "claude_verdict.json"
-    verdict_file.write_text(
-        json.dumps(
+        # ── 2. 프롬프트 구성 ──────────────────────────────────
+        results_payload = [
             {
-                "job_id": job_id,
-                "overall": overall,
-                "fail_reasons": parsed.get("fail_reasons", []),
-                "warn_reasons": parsed.get("warn_reasons", []),
-                "summary": parsed.get("summary", ""),
-                "checks": parsed.get("checks", []),
-                "validated_at": datetime.now(timezone.utc).isoformat(),
-            },
-            ensure_ascii=False,
-            indent=2,
+                "check": cr.check_name,
+                "status": cr.status,
+                "detail": cr.detail,
+                "raw": cr.raw_output,
+            }
+            for cr in check_results
+        ]
+        user_msg = _build_user_message(job_id, target_host, product_profile, results_payload)
+
+        log.info("validate.claude_call", job_id=job_id, check_count=len(check_results))
+
+        # ── 3. Claude API 호출 ────────────────────────────────
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        raw_response = await _call_claude(client, user_msg)
+
+        log.debug("validate.claude_raw", job_id=job_id, preview=raw_response[:200])
+
+        # ── 4. 응답 파싱 ──────────────────────────────────────
+        parsed = _parse_claude_response(raw_response)
+        overall = parsed.get("overall", "error")
+
+        # ── 5. CheckResult에 verdict 기록 ─────────────────────
+        verdict_map: dict[str, tuple[str, str]] = {}
+        for ch in parsed.get("checks", []):
+            name = ch.get("name", "")
+            verdict = ch.get("verdict", "warn")
+            reason = ch.get("reason", "")
+            if name:
+                verdict_map[name] = (verdict, reason)
+
+        async with SessionLocal() as session:
+            await _update_check_verdicts(session, job_id, verdict_map)
+
+        # ── 6. NFS에 판독 결과 저장 ───────────────────────────
+        nfs_job_dir = Path(settings.nfs_base_path) / "results" / job_id
+        nfs_job_dir.mkdir(parents=True, exist_ok=True)
+        verdict_file = nfs_job_dir / "claude_verdict.json"
+        verdict_file.write_text(
+            json.dumps(
+                {
+                    "job_id": job_id,
+                    "overall": overall,
+                    "fail_reasons": parsed.get("fail_reasons", []),
+                    "warn_reasons": parsed.get("warn_reasons", []),
+                    "summary": parsed.get("summary", ""),
+                    "checks": parsed.get("checks", []),
+                    "validated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
         )
-    )
 
-    # ── 7. Job 상태 업데이트 ──────────────────────────────
-    if overall == "pass":
-        new_status = "reporting"
-        log.info("validate.pass", job_id=job_id)
-    elif overall == "fail":
-        new_status = "fail"
-        fail_reasons = "; ".join(parsed.get("fail_reasons", []))
-        log.warning("validate.fail", job_id=job_id, reasons=fail_reasons)
-    else:
-        new_status = "error"
-        log.error("validate.error", job_id=job_id, overall=overall)
+        # ── 7. Job 상태 업데이트 ──────────────────────────────
+        if overall == "pass":
+            new_status = "reporting"
+            log.info("validate.pass", job_id=job_id)
+        elif overall == "fail":
+            new_status = "reporting"  # fail도 리포트 생성
+            fail_reasons = "; ".join(parsed.get("fail_reasons", []))
+            log.warning("validate.fail", job_id=job_id, reasons=fail_reasons)
+        else:
+            new_status = "error"
+            log.error("validate.error", job_id=job_id, overall=overall)
 
-    async with _SessionLocal() as session:
-        await _update_job_status(
-            session,
-            job_id,
-            new_status,
-            error_message="; ".join(parsed.get("fail_reasons", [])) if overall == "fail" else None,
-        )
-    await publish_job_status(job_id, new_status)
+        async with SessionLocal() as session:
+            await _update_job_status(
+                session,
+                job_id,
+                new_status,
+                error_message=(
+                    "; ".join(parsed.get("fail_reasons", [])) if overall == "fail" else None
+                ),
+            )
+        await publish_job_status(job_id, new_status)
 
-    # ── 8. pass면 report 트리거 ───────────────────────────
-    if overall == "pass":
-        from workers.report import generate_report
+        # ── 8. pass/fail 모두 report 트리거 ──────────────────
+        if overall in ("pass", "fail"):
+            from workers.report import generate_report
 
-        generate_report.apply_async(args=[job_id], queue="q_report")
-        log.info("validate.report_triggered", job_id=job_id)
+            generate_report.apply_async(args=[job_id], queue="q_report")
+            log.info("validate.report_triggered", job_id=job_id, overall=overall)
+    finally:
+        await engine.dispose()
 
 
 async def _mark_error(job_id: str, message: str) -> None:
-    async with _SessionLocal() as session:
-        await _update_job_status(session, job_id, "error", message[:2000])
-    await publish_job_status(job_id, "error", message[:2000])
+    engine, SessionLocal = _make_session()
+    try:
+        async with SessionLocal() as session:
+            await _update_job_status(session, job_id, "error", message[:2000])
+        await publish_job_status(job_id, "error", message[:2000])
+    finally:
+        await engine.dispose()
 
 
 # ---------------------------------------------------------------------------

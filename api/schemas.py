@@ -11,6 +11,7 @@ class JobCreate(BaseModel):
     target_host: str = Field(..., description="검수 대상 서버 IP 또는 호스트명")
     target_user: str = Field("root", description="SSH 접속 유저")
     product_profile: str = Field(..., description="제품 프로파일 이름 (checks/profiles/ 기준)")
+    sudo_password: str | None = Field(None, description="sudo 비밀번호 (스크립트 내 권한 필요 작업용, DB 미저장)")
 
 
 class JobResponse(BaseModel):

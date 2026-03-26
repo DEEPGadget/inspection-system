@@ -44,12 +44,13 @@ fi
 
 DETAILS+=("min_bw_2gpu_gbs=${MIN_BW_2GPU}" "min_bw_4gpu_gbs=${MIN_BW_4GPU}")
 
-# ── all_reduce_perf 바이너리 탐색 ────────────────────────
+# ── all_reduce_perf 바이너리 탐색 및 자동 빌드 ───────────
+NCCL_TESTS_DIR="/opt/nccl-tests"
 ALLREDUCE_BIN=""
 for candidate in \
     /usr/local/bin/all_reduce_perf \
     /usr/bin/all_reduce_perf \
-    /opt/nccl-tests/build/all_reduce_perf \
+    "${NCCL_TESTS_DIR}/build/all_reduce_perf" \
     /opt/nccl_tests/build/all_reduce_perf \
     /root/nccl-tests/build/all_reduce_perf; do
     if [[ -x "$candidate" ]]; then
@@ -57,6 +58,31 @@ for candidate in \
         break
     fi
 done
+
+# 없으면 github에서 클론 후 빌드
+if [[ -z "$ALLREDUCE_BIN" ]]; then
+    echo "all_reduce_perf not found — cloning nccl-tests from github" >&2
+    # 빌드 deps 설치 (git, make, build-essential)
+    if [[ -n "${SUDO_PASSWORD:-}" ]]; then
+        if command -v apt-get &>/dev/null; then
+            echo "$SUDO_PASSWORD" | sudo -S \
+                env DEBIAN_FRONTEND=noninteractive \
+                apt-get install -y -qq git make build-essential >/dev/null 2>&1 || true
+        fi
+    fi
+    if command -v git &>/dev/null && command -v make &>/dev/null && command -v nvcc &>/dev/null; then
+        rm -rf "${NCCL_TESTS_DIR}"
+        git clone --depth=1 https://github.com/NVIDIA/nccl-tests.git "${NCCL_TESTS_DIR}" >/dev/null 2>&1 \
+            && make -C "${NCCL_TESTS_DIR}" >/dev/null 2>&1 \
+            && echo "nccl-tests build succeeded" >&2 \
+            || echo "nccl-tests build failed — falling back to pytorch" >&2
+        if [[ -x "${NCCL_TESTS_DIR}/build/all_reduce_perf" ]]; then
+            ALLREDUCE_BIN="${NCCL_TESTS_DIR}/build/all_reduce_perf"
+        fi
+    else
+        echo "git/make/nvcc not available — cannot build nccl-tests" >&2
+    fi
+fi
 
 # ── 2-GPU 테스트 ─────────────────────────────────────────
 run_allreduce() {

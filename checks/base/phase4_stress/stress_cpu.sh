@@ -18,9 +18,28 @@ DURATION="${CPU_BURNIN_DURATION:-120}"
 NPROC=$(nproc 2>/dev/null || echo "1")
 DETAILS+=("logical_cpus=${NPROC}" "duration_s=${DURATION}")
 
-# ── 스트레스 도구 탐색 및 백그라운드 실행 ─────────────────
+# ── 스트레스 도구 탐색 및 자동 설치 ──────────────────────
 TOOL="none"
 STRESS_PID=""
+
+if ! command -v stress-ng &>/dev/null && ! command -v stress &>/dev/null; then
+    echo "stress/stress-ng not found — attempting install" >&2
+    if [[ -n "${SUDO_PASSWORD:-}" ]]; then
+        if command -v apt-get &>/dev/null; then
+            echo "$SUDO_PASSWORD" | sudo -S \
+                env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq stress-ng \
+                >/dev/null 2>&1 \
+                && echo "stress-ng installed" >&2 \
+                || echo "apt install stress-ng failed — falling back" >&2
+        elif command -v yum &>/dev/null; then
+            echo "$SUDO_PASSWORD" | sudo -S yum install -y -q stress-ng >/dev/null 2>&1 \
+                && echo "stress-ng installed" >&2 \
+                || echo "yum install stress-ng failed — falling back" >&2
+        fi
+    else
+        echo "SUDO_PASSWORD not set — skipping install" >&2
+    fi
+fi
 
 if command -v stress-ng &>/dev/null; then
     TOOL="stress-ng"
@@ -32,7 +51,6 @@ elif command -v stress &>/dev/null; then
     stress --cpu "$NPROC" --timeout "${DURATION}" >/dev/null 2>&1 &
     STRESS_PID=$!
 else
-    # 순수 bash 매트릭스 연산 부하 (Python 가능 시 사용)
     if python3 -c "import sys" 2>/dev/null; then
         TOOL="python3"
         python3 -c "

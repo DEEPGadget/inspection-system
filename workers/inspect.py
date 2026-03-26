@@ -20,11 +20,12 @@ from workers.notify import publish_job_status
 
 log = structlog.get_logger(__name__)
 
-# ---------------------------------------------------------------------------
-# 내부 DB 세션 (worker 전용)
-# ---------------------------------------------------------------------------
-_engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
-_SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+
+def _make_session() -> tuple:
+    """매 asyncio.run() 루프마다 새 엔진+세션팩토리를 생성."""
+    engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
+    session_local = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return engine, session_local
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +117,24 @@ async def _async_inspect(
     target_host: str,
     target_user: str,
     product_profile: str,
+    sudo_password: str | None = None,
+) -> None:
+    engine, SessionLocal = _make_session()
+    try:
+        await _async_inspect_inner(
+            job_id, target_host, target_user, product_profile, SessionLocal, sudo_password
+        )
+    finally:
+        await engine.dispose()
+
+
+async def _async_inspect_inner(
+    job_id: str,
+    target_host: str,
+    target_user: str,
+    product_profile: str,
+    SessionLocal: async_sessionmaker,
+    sudo_password: str | None = None,
 ) -> None:
     # ---- 프로파일 로드 ----
     profile_file = _profile_path(product_profile)
@@ -130,7 +149,7 @@ async def _async_inspect(
     raw_dir = _nfs_raw_dir(job_id)
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    async with _SessionLocal() as session:
+    async with SessionLocal() as session:
         await _update_job(session, job_id, status="inspecting")
     await publish_job_status(job_id, "inspecting")
 
@@ -157,12 +176,14 @@ async def _async_inspect(
                     continue
 
                 scripts: list[str] = phase_cfg.get("scripts", [])
-                phase_env: dict[str, str] = phase_cfg.get("env", {})
+                phase_env: dict[str, str] = dict(phase_cfg.get("env", {}))
+                if sudo_password:
+                    phase_env["SUDO_PASSWORD"] = sudo_password
                 for script_name in scripts:
                     local_script = _script_path(phase_dir, script_name)
                     if not local_script.exists():
                         log.warning("script.missing", script=str(local_script))
-                        async with _SessionLocal() as session:
+                        async with SessionLocal() as session:
                             await _save_check_result(
                                 session,
                                 job_id,
@@ -206,7 +227,7 @@ async def _async_inspect(
                     raw_file.write_text(json.dumps(output, ensure_ascii=False, indent=2))
 
                     # DB 저장
-                    async with _SessionLocal() as session:
+                    async with SessionLocal() as session:
                         await _save_check_result(
                             session, job_id, check_name, status, detail, output
                         )
@@ -218,7 +239,7 @@ async def _async_inspect(
             await conn.run(f"rm -rf {remote_tmp}", check=False)
 
     # ---- 검수 완료 → validate 트리거 ----
-    async with _SessionLocal() as session:
+    async with SessionLocal() as session:
         await _update_job(
             session,
             job_id,
@@ -234,9 +255,13 @@ async def _async_inspect(
 
 
 async def _mark_error(job_id: str, message: str) -> None:
-    async with _SessionLocal() as session:
-        await _update_job(session, job_id, status="error", error_message=message[:2000])
-    await publish_job_status(job_id, "error", message[:2000])
+    engine, SessionLocal = _make_session()
+    try:
+        async with SessionLocal() as session:
+            await _update_job(session, job_id, status="error", error_message=message[:2000])
+        await publish_job_status(job_id, "error", message[:2000])
+    finally:
+        await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +285,7 @@ def inspect_server(
     target_host: str,
     target_user: str,
     product_profile: str,
+    sudo_password: str | None = None,
 ) -> dict:
     """
     검수 실행 태스크.
@@ -269,16 +295,18 @@ def inspect_server(
         target_host: 검수 대상 서버 IP/hostname
         target_user: SSH 접속 유저
         product_profile: checks/profiles/ 아래 JSON 프로파일 이름
+        sudo_password: sudo 비밀번호 (스크립트 내 권한 필요 작업용)
     """
     log.info("inspect.start", job_id=job_id, host=target_host, profile=product_profile)
     try:
-        asyncio.run(_async_inspect(job_id, target_host, target_user, product_profile))
+        asyncio.run(
+            _async_inspect(job_id, target_host, target_user, product_profile, sudo_password)
+        )
         return {"job_id": job_id, "result": "ok"}
     except asyncssh.DisconnectError as exc:
         asyncio.run(_mark_error(job_id, f"SSH disconnect: {exc}"))
         raise self.retry(exc=exc)
     except asyncssh.PermissionDenied as exc:
-        # 인증 실패는 재시도 무의미
         asyncio.run(_mark_error(job_id, f"SSH auth failed: {exc}"))
         raise
     except FileNotFoundError as exc:

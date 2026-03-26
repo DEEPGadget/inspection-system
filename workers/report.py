@@ -25,8 +25,12 @@ from workers.notify import publish_job_status
 
 log = structlog.get_logger(__name__)
 
-_engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
-_SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+
+def _make_session() -> tuple:
+    """매 asyncio.run() 루프마다 새 엔진+세션팩토리를 생성."""
+    engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
+    session_local = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return engine, session_local
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
@@ -250,74 +254,83 @@ async def _update_job_status(
 
 
 async def _async_generate_report(job_id: str) -> None:
-    # ── 1. DB 로드 ────────────────────────────────────────
-    async with _SessionLocal() as session:
-        job, check_results = await _load_job_and_results(session, job_id)
-        job_data = {
-            "job_id": str(job.id),
-            "target_host": job.target_host,
-            "target_user": job.target_user,
-            "product_profile": job.product_profile,
-            "created_at": job.created_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+    engine, SessionLocal = _make_session()
+    try:
+        # ── 1. DB 로드 ────────────────────────────────────────
+        async with SessionLocal() as session:
+            job, check_results = await _load_job_and_results(session, job_id)
+            job_data = {
+                "job_id": str(job.id),
+                "target_host": job.target_host,
+                "target_user": job.target_user,
+                "product_profile": job.product_profile,
+                "created_at": job.created_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+            }
+
+        # ── 2. NFS에서 Claude 판독 결과 로드 ─────────────────
+        verdict_file = Path(settings.nfs_base_path) / "results" / job_id / "claude_verdict.json"
+        if not verdict_file.exists():
+            raise FileNotFoundError(f"claude_verdict.json not found: {verdict_file}")
+
+        verdict = json.loads(verdict_file.read_text(encoding="utf-8"))
+        overall = verdict.get("overall", "error")
+
+        # ── 3. 렌더링 컨텍스트 구성 ───────────────────────────
+        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        context = {
+            **job_data,
+            "overall": overall,
+            "fail_reasons": verdict.get("fail_reasons", []),
+            "warn_reasons": verdict.get("warn_reasons", []),
+            "summary": verdict.get("summary", ""),
+            "generated_at": generated_at,
+            "check_results": [
+                {
+                    "check_name": cr.check_name,
+                    "status": cr.status,
+                    "detail": cr.detail,
+                    "claude_verdict": cr.claude_verdict,
+                }
+                for cr in check_results
+            ],
         }
 
-    # ── 2. NFS에서 Claude 판독 결과 로드 ─────────────────
-    verdict_file = Path(settings.nfs_base_path) / "results" / job_id / "claude_verdict.json"
-    if not verdict_file.exists():
-        raise FileNotFoundError(f"claude_verdict.json not found: {verdict_file}")
+        # ── 4. NFS 출력 경로 준비 ─────────────────────────────
+        report_dir = Path(settings.nfs_base_path) / "results" / job_id
+        report_dir.mkdir(parents=True, exist_ok=True)
 
-    verdict = json.loads(verdict_file.read_text(encoding="utf-8"))
-    overall = verdict.get("overall", "error")
+        pdf_path = report_dir / "report.pdf"
+        xlsx_path = report_dir / "report.xlsx"
 
-    # ── 3. 렌더링 컨텍스트 구성 ───────────────────────────
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    context = {
-        **job_data,
-        "overall": overall,
-        "fail_reasons": verdict.get("fail_reasons", []),
-        "warn_reasons": verdict.get("warn_reasons", []),
-        "summary": verdict.get("summary", ""),
-        "generated_at": generated_at,
-        "check_results": [
-            {
-                "check_name": cr.check_name,
-                "status": cr.status,
-                "detail": cr.detail,
-                "claude_verdict": cr.claude_verdict,
-            }
-            for cr in check_results
-        ],
-    }
+        # ── 5. PDF + XLSX 생성 (동기 I/O — WeasyPrint 제약) ──
+        log.info("report.render_start", job_id=job_id, overall=overall)
+        _render_pdf(context, pdf_path)
+        _render_xlsx(context, xlsx_path)
+        log.info("report.render_done", job_id=job_id, pdf=str(pdf_path), xlsx=str(xlsx_path))
 
-    # ── 4. NFS 출력 경로 준비 ─────────────────────────────
-    report_dir = Path(settings.nfs_base_path) / "results" / job_id
-    report_dir.mkdir(parents=True, exist_ok=True)
+        # ── 6. DB에 Report 레코드 저장 ────────────────────────
+        async with SessionLocal() as session:
+            await _save_report_record(session, job_id, str(pdf_path), str(xlsx_path))
 
-    pdf_path = report_dir / "report.pdf"
-    xlsx_path = report_dir / "report.xlsx"
+        # ── 7. Job.status → overall 결과로 확정 ──────────────
+        final_status = "pass" if overall == "pass" else "fail"
+        async with SessionLocal() as session:
+            await _update_job_status(session, job_id, final_status)
+        await publish_job_status(job_id, final_status)
 
-    # ── 5. PDF + XLSX 생성 (동기 I/O — WeasyPrint 제약) ──
-    log.info("report.render_start", job_id=job_id, overall=overall)
-    _render_pdf(context, pdf_path)
-    _render_xlsx(context, xlsx_path)
-    log.info("report.render_done", job_id=job_id, pdf=str(pdf_path), xlsx=str(xlsx_path))
-
-    # ── 6. DB에 Report 레코드 저장 ────────────────────────
-    async with _SessionLocal() as session:
-        await _save_report_record(session, job_id, str(pdf_path), str(xlsx_path))
-
-    # ── 7. Job.status → "pass" ────────────────────────────
-    async with _SessionLocal() as session:
-        await _update_job_status(session, job_id, "pass")
-    await publish_job_status(job_id, "pass")
-
-    log.info("report.complete", job_id=job_id)
+        log.info("report.complete", job_id=job_id)
+    finally:
+        await engine.dispose()
 
 
 async def _mark_error(job_id: str, message: str) -> None:
-    async with _SessionLocal() as session:
-        await _update_job_status(session, job_id, "error", message[:2000])
-    await publish_job_status(job_id, "error", message[:2000])
+    engine, SessionLocal = _make_session()
+    try:
+        async with SessionLocal() as session:
+            await _update_job_status(session, job_id, "error", message[:2000])
+        await publish_job_status(job_id, "error", message[:2000])
+    finally:
+        await engine.dispose()
 
 
 # ---------------------------------------------------------------------------

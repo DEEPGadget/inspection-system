@@ -46,13 +46,42 @@ ECC_UNCORR_BEFORE=$(nvidia-smi --query-gpu=ecc.errors.uncorrected.volatile.total
 ECC_CORR_BEFORE="${ECC_CORR_BEFORE:-0}"
 ECC_UNCORR_BEFORE="${ECC_UNCORR_BEFORE:-0}"
 
-# ── 스트레스 도구 탐색 및 백그라운드 실행 ─────────────────
+# ── 스트레스 도구 탐색 및 자동 설치 ──────────────────────
 TOOL="none"
 STRESS_PID=""
+GPU_BURN_DIR="/opt/gpu-burn"
+
+# gpu_burn 자동 빌드 (없을 경우)
+if ! command -v gpu_burn &>/dev/null; then
+    if [[ ! -x "${GPU_BURN_DIR}/gpu_burn" ]]; then
+        echo "gpu_burn not found — cloning and building from github" >&2
+        # 빌드 deps 설치 (git, make, build-essential)
+        if [[ -n "${SUDO_PASSWORD:-}" ]]; then
+            if command -v apt-get &>/dev/null; then
+                echo "$SUDO_PASSWORD" | sudo -S \
+                    env DEBIAN_FRONTEND=noninteractive \
+                    apt-get install -y -qq git make build-essential >/dev/null 2>&1 || true
+            fi
+        fi
+        if command -v git &>/dev/null && command -v make &>/dev/null && command -v nvcc &>/dev/null; then
+            rm -rf "${GPU_BURN_DIR}"
+            git clone --depth=1 https://github.com/wilicc/gpu-burn.git "${GPU_BURN_DIR}" >/dev/null 2>&1 \
+                && make -C "${GPU_BURN_DIR}" >/dev/null 2>&1 \
+                && echo "gpu_burn build succeeded" >&2 \
+                || echo "gpu_burn build failed — falling back" >&2
+        else
+            echo "git/make/nvcc not available — cannot build gpu_burn" >&2
+        fi
+    fi
+fi
 
 if command -v gpu_burn &>/dev/null; then
     TOOL="gpu_burn"
     gpu_burn "$DURATION" >/dev/null 2>&1 &
+    STRESS_PID=$!
+elif [[ -x "${GPU_BURN_DIR}/gpu_burn" ]]; then
+    TOOL="gpu_burn"
+    "${GPU_BURN_DIR}/gpu_burn" "$DURATION" >/dev/null 2>&1 &
     STRESS_PID=$!
 elif command -v dcgmi &>/dev/null; then
     TOOL="dcgmi"

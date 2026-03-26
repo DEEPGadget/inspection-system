@@ -27,7 +27,8 @@ async def create_job(body: JobCreate, db: AsyncSession = Depends(get_db)):
     from workers.inspect import inspect_server
 
     task = inspect_server.apply_async(
-        args=[str(job.id), job.target_host, job.target_user, job.product_profile],
+        args=[str(job.id), job.target_host, job.target_user, job.product_profile,
+              body.sudo_password],
         queue="q_inspect",
     )
     job.celery_task_id = task.id
