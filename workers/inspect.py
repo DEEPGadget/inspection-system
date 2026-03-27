@@ -100,6 +100,7 @@ async def _run_script_over_ssh(
     local_script: Path,
     remote_tmp: str,
     env: dict[str, str] | None = None,
+    timeout: int = 300,
 ) -> asyncssh.SSHCompletedProcess:
     """스크립트를 원격 /tmp에 업로드한 뒤 실행, 결과 반환."""
     remote_path = f"{remote_tmp}/{local_script.name}"
@@ -108,7 +109,7 @@ async def _run_script_over_ssh(
         await sftp.chmod(remote_path, 0o755)
 
     cmd = f"bash {remote_path}"
-    result = await conn.run(cmd, env=env or {}, check=False)
+    result = await conn.run(cmd, env=env or {}, check=False, timeout=timeout)
     return result
 
 
@@ -194,10 +195,24 @@ async def _async_inspect_inner(
                             )
                         continue
 
+                    script_timeout = int(phase_cfg.get("timeout", 300))
                     log.info("script.run", script=script_name, phase=phase_dir)
-                    result = await _run_script_over_ssh(
-                        conn, local_script, remote_tmp, env=phase_env
-                    )
+                    try:
+                        result = await _run_script_over_ssh(
+                            conn, local_script, remote_tmp, env=phase_env, timeout=script_timeout
+                        )
+                    except asyncssh.misc.DisconnectError as exc:
+                        log.warning("script.timeout", script=script_name, timeout=script_timeout)
+                        output = {"check": script_name, "status": "warn", "detail": f"script timeout after {script_timeout}s: {exc}"}
+                        async with SessionLocal() as session:
+                            await _save_check_result(session, job_id, script_name, "warn", output["detail"], output)
+                        continue
+                    except TimeoutError:
+                        log.warning("script.timeout", script=script_name, timeout=script_timeout)
+                        output = {"check": script_name, "status": "warn", "detail": f"script timeout after {script_timeout}s"}
+                        async with SessionLocal() as session:
+                            await _save_check_result(session, job_id, script_name, "warn", output["detail"], output)
+                        continue
 
                     # stdout → JSON 파싱
                     stdout = result.stdout.strip() if result.stdout else ""

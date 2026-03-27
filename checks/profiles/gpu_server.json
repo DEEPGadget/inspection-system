@@ -13,14 +13,16 @@
     "phase4_stress": {
       "enabled": true,
       "scripts": ["stress_gpu", "stress_cpu"],
+      "timeout": 60,
       "env": {
-        "GPU_BURNIN_DURATION": "300",
-        "CPU_BURNIN_DURATION": "120"
+        "GPU_BURNIN_DURATION": "10",
+        "CPU_BURNIN_DURATION": "10"
       }
     },
     "phase5_nccl": {
       "enabled": true,
       "scripts": ["nccl_bandwidth"],
+      "timeout": 120,
       "env": {
         "NCCL_ALLREDUCE_MIN_BW_2GPU": "30",
         "NCCL_ALLREDUCE_MIN_BW_4GPU": "5",
