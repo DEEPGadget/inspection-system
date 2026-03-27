@@ -50,13 +50,9 @@ ECC_UNCORR_BEFORE="${ECC_UNCORR_BEFORE:-0}"
 TOOL="none"
 STRESS_PID=""
 GPU_BURN_DIR="/opt/gpu-burn"
-DOCKER_CONTAINER_NAME=""
 
-# ── trap: 종료 시 stress 프로세스 + Docker 컨테이너 정리 ──
-trap '
-    [[ -n "${STRESS_PID:-}" ]] && kill "${STRESS_PID}" 2>/dev/null || true
-    [[ -n "${DOCKER_CONTAINER_NAME:-}" ]] && docker stop "${DOCKER_CONTAINER_NAME}" 2>/dev/null || true
-' EXIT
+# ── trap: 종료 시 stress 프로세스 정리 ─────────────────────
+trap '[[ -n "${STRESS_PID:-}" ]] && kill "${STRESS_PID}" 2>/dev/null || true' EXIT
 
 # 1) 호스트에 gpu_burn 바이너리가 있으면 직접 사용
 if command -v gpu_burn &>/dev/null; then
@@ -87,25 +83,6 @@ elif command -v nvcc &>/dev/null; then
     if [[ -x "${GPU_BURN_DIR}/gpu_burn" ]]; then
         TOOL="gpu_burn"
         "${GPU_BURN_DIR}/gpu_burn" "$DURATION" >/dev/null 2>&1 &
-        STRESS_PID=$!
-    fi
-
-# 3) nvcc 없으면 Docker로 gpu_burn 실행
-elif command -v docker &>/dev/null; then
-    echo "nvcc not found — using Docker to run gpu_burn" >&2
-    GPU_BURN_IMAGE="gpu_burn_local"
-    if ! docker image inspect "${GPU_BURN_IMAGE}:latest" &>/dev/null 2>&1; then
-        echo "Building gpu-burn Docker image (one-time)..." >&2
-        docker build -t "${GPU_BURN_IMAGE}" \
-            https://github.com/wilicc/gpu-burn.git >/dev/null 2>&1 \
-            && echo "gpu_burn Docker image built" >&2 \
-            || { echo "Docker build failed — falling back" >&2; GPU_BURN_IMAGE=""; }
-    fi
-    if [[ -n "${GPU_BURN_IMAGE}" ]]; then
-        TOOL="gpu_burn_docker"
-        DOCKER_CONTAINER_NAME="gpu_burn_inspect_$$"
-        docker run --rm --gpus all --name "${DOCKER_CONTAINER_NAME}" \
-            "${GPU_BURN_IMAGE}" "$DURATION" >/dev/null 2>&1 &
         STRESS_PID=$!
     fi
 fi
