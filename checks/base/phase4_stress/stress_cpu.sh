@@ -27,12 +27,12 @@ if ! command -v stress-ng &>/dev/null && ! command -v stress &>/dev/null; then
     if [[ -n "${SUDO_PASSWORD:-}" ]]; then
         if command -v apt-get &>/dev/null; then
             echo "$SUDO_PASSWORD" | sudo -S \
-                env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq stress-ng \
+                env DEBIAN_FRONTEND=noninteractive timeout 60 apt-get install -y -qq stress-ng \
                 >/dev/null 2>&1 \
                 && echo "stress-ng installed" >&2 \
                 || echo "apt install stress-ng failed — falling back" >&2
         elif command -v yum &>/dev/null; then
-            echo "$SUDO_PASSWORD" | sudo -S yum install -y -q stress-ng >/dev/null 2>&1 \
+            echo "$SUDO_PASSWORD" | sudo -S timeout 60 yum install -y -q stress-ng >/dev/null 2>&1 \
                 && echo "stress-ng installed" >&2 \
                 || echo "yum install stress-ng failed — falling back" >&2
         fi
