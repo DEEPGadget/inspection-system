@@ -1,6 +1,11 @@
 {
   "profile_name": "gpu_server",
   "product_line": "gpu",
+  "pre_install": {
+    "enabled": true,
+    "timeout": 300,
+    "packages": ["stress-ng", "lm-sensors"]
+  },
   "phases": {
     "phase2_sw_basic": {
       "enabled": true,
@@ -13,10 +18,10 @@
     "phase4_stress": {
       "enabled": true,
       "scripts": ["stress_gpu", "stress_cpu"],
-      "timeout": 60,
+      "timeout": 7200,
       "env": {
-        "GPU_BURNIN_DURATION": "10",
-        "CPU_BURNIN_DURATION": "10"
+        "GPU_BURNIN_DURATION": "300",
+        "CPU_BURNIN_DURATION": "120"
       }
     },
     "phase5_nccl": {

@@ -15,8 +15,10 @@ FROM base AS worker
 RUN apt-get update && apt-get install -y --no-install-recommends \
     texlive-xetex \
     texlive-latex-recommended \
+    texlive-latex-extra \
     texlive-fonts-recommended \
     texlive-lang-cjk \
+    texlive-lang-chinese \
     fonts-noto-cjk && \
     rm -rf /var/lib/apt/lists/*
 COPY . .
