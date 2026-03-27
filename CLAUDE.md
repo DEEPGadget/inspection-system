@@ -2,7 +2,7 @@
 
 멀티워커 기반 GPU 서버 출고 검수 자동화 시스템.
 FastAPI + Celery + Redis + PostgreSQL + NFS.
-검수 대상 서버에 SSH 접속 → 셸스크립트 실행 → Claude API 판독 → 리포트 생성.
+검수 대상 서버에 SSH 접속 → Python 스크립트 실행 → Claude API 판독 → 리포트 생성.
 
 ## Architecture
 ```
@@ -26,10 +26,10 @@ workers/          Celery tasks
   inspect.py      q_inspect — SSH 검수 실행
   validate.py     q_validate — Claude API 판독
   report.py       q_report — PDF/XLSX 생성
-checks/           검수 셸스크립트
-  base/           phase2~7 공통 스크립트
+checks/           검수 Python 스크립트
+  base/           phase2~7 공통 스크립트 (.py)
   custom/         고객사별 커스텀
-  profiles/       제품별 JSON 프로파일 (어떤 check를 돌릴지)
+  profiles/       제품별 JSON 프로파일 (어떤 check를 돌릴지, pre_install 패키지 목록 포함)
 config/           settings.py, celeryconfig.py, prompts/
 templates/        Jinja2 리포트 템플릿
 scripts/          deploy.sh, setup-server.sh, daily_check.sh
@@ -58,18 +58,19 @@ tests/            pytest (test_api/, test_workers/, test_checks/)
 - 에러 처리: 구체적 예외 catch. bare except 금지
 - f-string 사용. .format() 사용 금지
 
-### Shell (checks/ 스크립트)
-- shebang: `#!/bin/bash`
-- `set -euo pipefail` 필수
-- stdout은 JSON만. 디버그는 stderr로
-- 출력 규격: `{"check":"name","status":"pass|fail|warn","detail":"..."}`
-- 외부 의존성 최소화 (curl, jq 정도만)
-- POSIX + bash 확장 최소화 (RHEL/Ubuntu 호환)
+### 검수 스크립트 (checks/base/ — Python)
+- shebang: `#!/usr/bin/env python3`
+- stdout은 JSON 한 줄만. 디버그는 stderr로
+- 출력 규격: `{"check":"name","status":"pass|fail|warn","detail":"key=val|key2=val2"}`
+- stdlib만 사용 — 원격 서버에 pip 설치 금지
+- 외부 명령: `subprocess.run(shell=True, capture_output=True, text=True, timeout=N)`
+- 환경변수: `os.environ.get("VAR", "default")`로 수신 (sshd AcceptEnv 우회)
 
 ### 검수 스크립트 작성 시
-- checks/base/ 기존 스크립트 스타일 참조
-- 새 스크립트 추가 시 반드시: 1) JSON 출력 검증 2) shellcheck 통과 3) checks/profiles/ 에 등록
+- checks/base/ 기존 스크립트 스타일 참조 (sw_cpu.py, stress_gpu.py 등)
+- 새 스크립트 추가 시 반드시: 1) JSON 출력 검증 2) 문법 확인(`python3 -c "import ast; ast.parse(open('x.py').read())"`) 3) checks/profiles/ 에 등록
 - 파라미터는 환경변수로 받음 (예: GPU_BURNIN_DURATION, REQUIRED_SW)
+- apt/sudo 필요 패키지는 스크립트 내부가 아닌 프로파일 `pre_install.packages`에 등록
 
 ### Git
 - branch: feature/, fix/, chore/
@@ -85,6 +86,10 @@ tests/            pytest (test_api/, test_workers/, test_checks/)
 - validate concurrency=2인 이유: Claude API rate limit 대응
 - task_acks_late=True: 워커 crash 시 재할당 보장
 - stress test timeout: soft 7200s, hard 7500s (GPU burn-in 최대 2h)
+- per-script SSH timeout: 프로파일 phase별 `timeout` 필드 → `conn.run(timeout=N)` 적용
+- pre_install: 검수 전 apt 패키지 자동 설치. `conn.run(input=password\n)`으로 TTY 없이 sudo 처리
+  - `DEBIAN_FRONTEND=noninteractive sudo -S apt-get install -y <pkgs>`
+  - 프로파일 `pre_install.packages` 목록 기준
 
 ## Validation Rules (Claude API 판독 기준)
 상세 기준: config/prompts/validation_gpu_server.txt 참조
@@ -112,7 +117,7 @@ celery -A workers.app inspect ping          # 워커 응답 확인
 redis-cli LLEN q_inspect                    # 큐 depth
 pytest                                      # 테스트
 ruff check . && ruff format --check .       # lint
-bash checks/base/phase2_sw_basic/sw_gpu.sh | python3 -m json.tool  # 스크립트 검증
+python3 checks/base/phase2_sw_basic/sw_gpu.py | python3 -m json.tool  # 스크립트 로컬 검증
 bash scripts/daily_check.sh                 # 코드 품질 수동 실행
 ```
 
@@ -132,10 +137,15 @@ bash scripts/daily_check.sh                 # 코드 품질 수동 실행
 - [x] Alembic 마이그레이션 — alembic/versions/69c4beca_initial_schema.py
 - [x] Jobs API (POST/GET/DELETE) — api/routers/jobs.py
 - [x] Inspect Worker SSH 로직 — workers/inspect.py
-- [x] 검수 스크립트 8개 (phase2~7) — checks/base/
+  - pre_install: `conn.run(input=password)` 방식 apt 자동 설치
+  - per-script SSH timeout: 프로파일 phase.timeout 적용
+- [x] 검수 스크립트 12개 (phase2~7) — checks/base/ (전체 Python)
   - phase2: sw_cpu, sw_gpu, sw_memory, sw_network, sw_storage
+  - phase3: sw_power_mgmt, sw_auto_update
   - phase4: stress_gpu, stress_cpu
   - phase5: nccl_bandwidth
+  - phase6: sw_os_version
+  - phase7: collect_all_logs
 - [x] Validate Worker Claude API 연동 — workers/validate.py
 - [x] Report Worker PDF/XLSX 생성 — workers/report.py
 - [x] Reports API 다운로드 (GET /{job_id}, /pdf, /xlsx) — api/routers/reports.py
