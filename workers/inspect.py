@@ -56,6 +56,34 @@ def _ssh_key_path(target_host: str) -> str | None:
     return None
 
 
+async def _apt_install(
+    conn: asyncssh.SSHClientConnection,
+    packages: list[str],
+    sudo_password: str,
+    timeout: int = 300,
+) -> tuple[bool, str]:
+    """원격 서버에 apt 패키지를 설치한다.
+
+    sudo 비밀번호를 conn.run(input=)으로 stdin에 직접 주입하여
+    TTY 없는 SSH 세션에서도 정상 동작하도록 한다.
+    DEBIAN_FRONTEND=noninteractive 설정으로 interactive prompt를 방지한다.
+
+    Returns:
+        (success: bool, output: str)
+    """
+    pkg_str = " ".join(packages)
+    cmd = f"DEBIAN_FRONTEND=noninteractive sudo -S apt-get install -y {pkg_str} 2>&1"
+    result = await conn.run(
+        cmd,
+        input=f"{sudo_password}\n",
+        check=False,
+        timeout=timeout,
+    )
+    success = result.exit_status == 0
+    output = (result.stdout or "").strip()
+    return success, output
+
+
 # ---------------------------------------------------------------------------
 # async 핵심 로직
 # ---------------------------------------------------------------------------
@@ -169,6 +197,21 @@ async def _async_inspect_inner(
     async with asyncssh.connect(**connect_kwargs) as conn:
         remote_tmp = f"/tmp/inspection_{job_id[:8]}"
         await conn.run(f"mkdir -p {remote_tmp}", check=True)
+
+        # ---- pre_install: 검수 전 패키지 설치 ----
+        pre_install_cfg: dict = profile.get("pre_install", {})
+        if pre_install_cfg.get("enabled", False) and sudo_password:
+            packages: list[str] = pre_install_cfg.get("packages", [])
+            if packages:
+                log.info("pre_install.start", packages=packages)
+                install_timeout = int(pre_install_cfg.get("timeout", 300))
+                ok, output = await _apt_install(conn, packages, sudo_password, install_timeout)
+                if ok:
+                    log.info("pre_install.done", packages=packages)
+                else:
+                    log.warning("pre_install.failed", packages=packages, output=output[:200])
+        elif pre_install_cfg.get("enabled", False) and not sudo_password:
+            log.warning("pre_install.skip", reason="sudo_password not provided")
 
         try:
             for phase_dir, phase_cfg in phases.items():

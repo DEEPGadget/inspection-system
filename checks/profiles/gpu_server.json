@@ -1,6 +1,11 @@
 {
   "profile_name": "gpu_server",
   "product_line": "gpu",
+  "pre_install": {
+    "enabled": true,
+    "timeout": 300,
+    "packages": ["stress-ng", "lm-sensors"]
+  },
   "phases": {
     "phase2_sw_basic": {
       "enabled": true,
