@@ -23,23 +23,7 @@ TOOL="none"
 STRESS_PID=""
 
 if ! command -v stress-ng &>/dev/null && ! command -v stress &>/dev/null; then
-    echo "stress/stress-ng not found — attempting install" >&2
-    if [[ -n "${SUDO_PASSWORD:-}" ]]; then
-        if command -v apt-get &>/dev/null; then
-            echo "$SUDO_PASSWORD" | sudo -S \
-                env DEBIAN_FRONTEND=noninteractive timeout 60 apt-get install -y -qq stress-ng \
-                </dev/null >/dev/null 2>&1 \
-                && echo "stress-ng installed" >&2 \
-                || echo "apt install stress-ng failed — falling back" >&2
-        elif command -v yum &>/dev/null; then
-            echo "$SUDO_PASSWORD" | sudo -S timeout 60 yum install -y -q stress-ng \
-                </dev/null >/dev/null 2>&1 \
-                && echo "stress-ng installed" >&2 \
-                || echo "yum install stress-ng failed — falling back" >&2
-        fi
-    else
-        echo "SUDO_PASSWORD not set — skipping install" >&2
-    fi
+    echo "stress/stress-ng not found — falling back to python3" >&2
 fi
 
 if command -v stress-ng &>/dev/null; then

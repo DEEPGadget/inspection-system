@@ -59,18 +59,9 @@ for candidate in \
     fi
 done
 
-# 없으면 github에서 클론 후 빌드
+# 없으면 github에서 클론 후 빌드 (git/make/nvcc는 이미 설치돼 있어야 함)
 if [[ -z "$ALLREDUCE_BIN" ]]; then
-    echo "all_reduce_perf not found — cloning nccl-tests from github" >&2
-    # 빌드 deps 설치 (git, make, build-essential)
-    if [[ -n "${SUDO_PASSWORD:-}" ]]; then
-        if command -v apt-get &>/dev/null; then
-            echo "$SUDO_PASSWORD" | sudo -S \
-                env DEBIAN_FRONTEND=noninteractive \
-                timeout 60 apt-get install -y -qq git make build-essential \
-                </dev/null >/dev/null 2>&1 || true
-        fi
-    fi
+    echo "all_reduce_perf not found — attempting build from github" >&2
     if command -v git &>/dev/null && command -v make &>/dev/null && command -v nvcc &>/dev/null; then
         rm -rf "${NCCL_TESTS_DIR}"
         git clone --depth=1 https://github.com/NVIDIA/nccl-tests.git "${NCCL_TESTS_DIR}" >/dev/null 2>&1 \

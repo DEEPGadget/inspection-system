@@ -64,15 +64,9 @@ elif [[ -x "${GPU_BURN_DIR}/gpu_burn" ]]; then
     "${GPU_BURN_DIR}/gpu_burn" "$DURATION" >/dev/null 2>&1 &
     STRESS_PID=$!
 
-# 2) nvcc 있으면 소스 빌드
+# 2) nvcc 있으면 소스 빌드 (git/make는 이미 설치돼 있어야 함)
 elif command -v nvcc &>/dev/null; then
     echo "nvcc found — building gpu_burn from source" >&2
-    if [[ -n "${SUDO_PASSWORD:-}" ]] && command -v apt-get &>/dev/null; then
-        echo "$SUDO_PASSWORD" | sudo -S \
-            env DEBIAN_FRONTEND=noninteractive \
-            timeout 60 apt-get install -y -qq git make build-essential \
-            </dev/null >/dev/null 2>&1 || true
-    fi
     if command -v git &>/dev/null && command -v make &>/dev/null; then
         rm -rf "${GPU_BURN_DIR}"
         git clone --depth=1 https://github.com/wilicc/gpu-burn.git "${GPU_BURN_DIR}" >/dev/null 2>&1 \
