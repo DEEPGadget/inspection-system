@@ -67,7 +67,8 @@ if [[ -z "$ALLREDUCE_BIN" ]]; then
         if command -v apt-get &>/dev/null; then
             echo "$SUDO_PASSWORD" | sudo -S \
                 env DEBIAN_FRONTEND=noninteractive \
-                timeout 60 apt-get install -y -qq git make build-essential >/dev/null 2>&1 || true
+                timeout 60 apt-get install -y -qq git make build-essential \
+                </dev/null >/dev/null 2>&1 || true
         fi
     fi
     if command -v git &>/dev/null && command -v make &>/dev/null && command -v nvcc &>/dev/null; then
