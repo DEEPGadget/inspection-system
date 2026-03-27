@@ -40,7 +40,7 @@ def _profile_path(profile_name: str) -> Path:
 
 def _script_path(phase_dir: str, script_name: str) -> Path:
     base = Path(__file__).parent.parent / "checks" / "base"
-    return base / phase_dir / f"{script_name}.sh"
+    return base / phase_dir / f"{script_name}.py"
 
 
 def _nfs_raw_dir(job_id: str) -> Path:
@@ -136,7 +136,7 @@ async def _run_script_over_ssh(
         await sftp.put(str(local_script), remote_path)
         await sftp.chmod(remote_path, 0o755)
 
-    cmd = f"bash {remote_path}"
+    cmd = f"python3 {remote_path}"
     result = await conn.run(cmd, env=env or {}, check=False, timeout=timeout)
     return result
 
