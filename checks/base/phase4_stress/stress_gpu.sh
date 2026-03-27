@@ -17,13 +17,13 @@ DETAILS=()
 DURATION="${GPU_BURNIN_DURATION:-300}"
 
 # ── nvidia-smi 확인 ───────────────────────────────────────
-if ! command -v nvidia-smi &>/dev/null; then
+if ! command -v nvidia-smi &>/dev/null || ! timeout 10 nvidia-smi &>/dev/null; then
     printf '{"check":"%s","status":"fail","detail":"nvidia-smi not found"}\n' "$CHECK"
     exit 0
 fi
 
 # ── GPU 수량 확인 ─────────────────────────────────────────
-GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l || echo "0")
+GPU_COUNT=$(timeout 10 nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l || echo "0")
 if [[ "$GPU_COUNT" -eq 0 ]]; then
     printf '{"check":"%s","status":"fail","detail":"no GPUs detected"}\n' "$CHECK"
     exit 0
@@ -31,16 +31,16 @@ fi
 DETAILS+=("gpu_count=${GPU_COUNT}")
 
 # ── TDP 조회 ─────────────────────────────────────────────
-TDP=$(nvidia-smi --query-gpu=power.limit --format=csv,noheader,nounits 2>/dev/null \
+TDP=$(timeout 10 nvidia-smi --query-gpu=power.limit --format=csv,noheader,nounits 2>/dev/null \
     | head -1 | tr -d ' ')
 TDP="${TDP:-0}"
 DETAILS+=("tdp_w=${TDP}")
 
 # ── ECC 기준값 스냅샷 (부하 전) ──────────────────────────
-ECC_CORR_BEFORE=$(nvidia-smi --query-gpu=ecc.errors.corrected.volatile.total \
+ECC_CORR_BEFORE=$(timeout 10 nvidia-smi --query-gpu=ecc.errors.corrected.volatile.total \
     --format=csv,noheader,nounits 2>/dev/null \
     | grep -v "N/A" | awk '{s+=$1} END {print s+0}')
-ECC_UNCORR_BEFORE=$(nvidia-smi --query-gpu=ecc.errors.uncorrected.volatile.total \
+ECC_UNCORR_BEFORE=$(timeout 10 nvidia-smi --query-gpu=ecc.errors.uncorrected.volatile.total \
     --format=csv,noheader,nounits 2>/dev/null \
     | grep -v "N/A" | awk '{s+=$1} END {print s+0}')
 ECC_CORR_BEFORE="${ECC_CORR_BEFORE:-0}"
@@ -171,10 +171,10 @@ if [[ -n "$STRESS_PID" ]]; then
 fi
 
 # ── ECC 사후 측정 (부하 후) ───────────────────────────────
-ECC_CORR_AFTER=$(nvidia-smi --query-gpu=ecc.errors.corrected.volatile.total \
+ECC_CORR_AFTER=$(timeout 10 nvidia-smi --query-gpu=ecc.errors.corrected.volatile.total \
     --format=csv,noheader,nounits 2>/dev/null \
     | grep -v "N/A" | awk '{s+=$1} END {print s+0}')
-ECC_UNCORR_AFTER=$(nvidia-smi --query-gpu=ecc.errors.uncorrected.volatile.total \
+ECC_UNCORR_AFTER=$(timeout 10 nvidia-smi --query-gpu=ecc.errors.uncorrected.volatile.total \
     --format=csv,noheader,nounits 2>/dev/null \
     | grep -v "N/A" | awk '{s+=$1} END {print s+0}')
 ECC_CORR_AFTER="${ECC_CORR_AFTER:-0}"
