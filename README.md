@@ -1,7 +1,7 @@
 # Server Inspection System
 
 GPU 서버 출고 전 검수를 자동화하는 멀티워커 파이프라인 시스템.
-대상 서버에 SSH로 접속하여 셸스크립트를 실행하고, Claude API로 결과를 판독한 뒤 PDF/XLSX 리포트를 생성합니다.
+대상 서버에 SSH로 접속하여 Python 스크립트를 실행하고, Claude API로 결과를 판독한 뒤 PDF/XLSX 리포트를 생성합니다.
 
 ---
 
@@ -35,10 +35,11 @@ GPU 서버 출고 전 검수를 자동화하는 멀티워커 파이프라인 시
 │        worker_inspect  (×4)             │  │  │  │
 │                                         │  │  │  │
 │  1. SSH 접속 (asyncssh)                 │  │  │  │
-│  2. 스크립트 SFTP 전송                   │  │  │  │
-│  3. bash 실행 → JSON 수집               │──┘  │  │
-│  4. NFS 저장 + DB 저장                  │     │  │
-│  5. q_validate 에 체인                  │     │  │
+│  2. pre_install (apt) → 검수 도구 설치  │  │  │  │
+│  3. 스크립트 SFTP 전송                   │  │  │  │
+│  4. python3 실행 → JSON 수집            │──┘  │  │
+│  5. NFS 저장 + DB 저장                  │     │  │
+│  6. q_validate 에 체인                  │     │  │
 └──────────────────┬──────────────────────┘     │  │
                    │ q_validate                  │  │
                    ▼                             │  │
@@ -112,8 +113,10 @@ WS     /ws/jobs/{job_id}            실시간 상태 구독
 #### worker_inspect — SSH 검수 실행
 
 - 큐: `q_inspect` / concurrency: 4
-- `checks/profiles/{profile}.json` 에서 실행할 스크립트 목록 로드
-- asyncssh로 대상 서버에 SFTP 전송 후 `bash` 실행
+- `checks/profiles/{profile}.json` 에서 실행할 스크립트 목록 및 `pre_install` 패키지 로드
+- 검수 전 `conn.run(input=password)` 방식으로 apt 패키지 자동 설치 (TTY 없이 sudo 동작)
+- asyncssh로 대상 서버에 SFTP 전송 후 `python3` 실행
+- 프로파일 phase별 `timeout` 필드를 `conn.run(timeout=N)`에 적용 (hang 방지)
 - 결과 JSON을 NFS(`inspect_raw/`) 및 DB(`check_results`)에 저장
 - 완료 후 `validate_results` 태스크를 `q_validate`에 체인
 
@@ -144,18 +147,20 @@ WS     /ws/jobs/{job_id}            실시간 상태 구독
 
 | Phase | 스크립트 | 검사 항목 |
 |---|---|---|
-| phase2 | `sw_cpu.sh` | CPU 모델·코어·주파수·온도 |
-| phase2 | `sw_gpu.sh` | GPU 모델·VRAM·온도·전력·ECC·NVLink |
-| phase2 | `sw_memory.sh` | 메모리 용량·DIMM·ECC·NUMA |
-| phase2 | `sw_storage.sh` | 디스크 목록·NVMe 상태·사용률 |
-| phase2 | `sw_network.sh` | NIC 링크·속도·MTU |
-| phase3 | `sw_power_mgmt.sh` | sleep.target masked·CPU governor·C-state |
-| phase3 | `sw_auto_update.sh` | unattended-upgrades 비활성화 확인 |
-| phase4 | `stress_gpu.sh` | GPU burn-in (nvidia-smi dmon, 기본 300s) |
-| phase4 | `stress_cpu.sh` | CPU 부하 테스트 (stress-ng, 기본 120s) |
-| phase5 | `nccl_bandwidth.sh` | AllReduce 대역폭 (all_reduce_perf / torchrun) |
-| phase6 | `sw_os_version.sh` | OS·커널·필수 패키지 버전 |
-| phase7 | `collect_all_logs.sh` | dmesg·syslog 수집 |
+| phase2 | `sw_cpu.py` | CPU 모델·코어·주파수·온도 |
+| phase2 | `sw_gpu.py` | GPU 모델·VRAM·온도·전력·ECC·NVLink |
+| phase2 | `sw_memory.py` | 메모리 용량·DIMM·ECC·NUMA |
+| phase2 | `sw_storage.py` | 디스크 목록·NVMe 상태·사용률 |
+| phase2 | `sw_network.py` | NIC 링크·속도·MTU |
+| phase3 | `sw_power_mgmt.py` | sleep.target masked·CPU governor·C-state |
+| phase3 | `sw_auto_update.py` | unattended-upgrades 비활성화 확인 |
+| phase4 | `stress_gpu.py` | GPU burn-in (nvidia-smi dmon, 기본 300s) |
+| phase4 | `stress_cpu.py` | CPU 부하 테스트 (stress-ng/python3 fallback, 기본 120s) |
+| phase5 | `nccl_bandwidth.py` | AllReduce 대역폭 (all_reduce_perf / torchrun) |
+| phase6 | `sw_os_version.py` | OS·커널·필수 패키지 버전 |
+| phase7 | `collect_all_logs.py` | dmesg·syslog 수집 |
+
+> 모든 스크립트는 Python 3 stdlib만 사용. 원격 서버에 pip 설치 불필요.
 
 **판정 임계값**
 | 항목 | 기준 |
@@ -176,11 +181,17 @@ WS     /ws/jobs/{job_id}            실시간 상태 구독
 ```json
 {
   "profile_name": "gpu_server",
+  "pre_install": {
+    "enabled": true,
+    "timeout": 300,
+    "packages": ["stress-ng", "lm-sensors"]
+  },
   "phases": {
     "phase4_stress": {
       "enabled": true,
       "scripts": ["stress_gpu", "stress_cpu"],
-      "env": { "GPU_BURNIN_DURATION": "300" }
+      "timeout": 7200,
+      "env": { "GPU_BURNIN_DURATION": "300", "CPU_BURNIN_DURATION": "120" }
     }
   }
 }
@@ -245,7 +256,8 @@ curl -sL -X POST http://localhost:8000/api/jobs/ \
   -d '{
     "target_host": "10.100.1.5",
     "target_user": "deepgadget",
-    "product_profile": "gpu_server"
+    "product_profile": "gpu_server",
+    "sudo_password": "password"
   }' | python3 -m json.tool
 ```
 
@@ -310,8 +322,8 @@ pytest tests/ -x -q
 # Lint / Format
 ruff check . && ruff format --check .
 
-# 스크립트 단독 검증
-bash checks/base/phase2_sw_basic/sw_gpu.sh | python3 -m json.tool
+# 스크립트 단독 검증 (로컬 실행)
+python3 checks/base/phase2_sw_basic/sw_gpu.py | python3 -m json.tool
 ```
 
 **브랜치 전략**
