@@ -46,35 +46,19 @@ ECC_UNCORR_BEFORE=$(nvidia-smi --query-gpu=ecc.errors.uncorrected.volatile.total
 ECC_CORR_BEFORE="${ECC_CORR_BEFORE:-0}"
 ECC_UNCORR_BEFORE="${ECC_UNCORR_BEFORE:-0}"
 
-# ── 스트레스 도구 탐색 및 자동 설치 ──────────────────────
+# ── 스트레스 도구 탐색 및 실행 ────────────────────────────
 TOOL="none"
 STRESS_PID=""
 GPU_BURN_DIR="/opt/gpu-burn"
+DOCKER_CONTAINER_NAME=""
 
-# gpu_burn 자동 빌드 (없을 경우)
-if ! command -v gpu_burn &>/dev/null; then
-    if [[ ! -x "${GPU_BURN_DIR}/gpu_burn" ]]; then
-        echo "gpu_burn not found — cloning and building from github" >&2
-        # 빌드 deps 설치 (git, make, build-essential)
-        if [[ -n "${SUDO_PASSWORD:-}" ]]; then
-            if command -v apt-get &>/dev/null; then
-                echo "$SUDO_PASSWORD" | sudo -S \
-                    env DEBIAN_FRONTEND=noninteractive \
-                    timeout 60 apt-get install -y -qq git make build-essential >/dev/null 2>&1 || true
-            fi
-        fi
-        if command -v git &>/dev/null && command -v make &>/dev/null && command -v nvcc &>/dev/null; then
-            rm -rf "${GPU_BURN_DIR}"
-            git clone --depth=1 https://github.com/wilicc/gpu-burn.git "${GPU_BURN_DIR}" >/dev/null 2>&1 \
-                && make -C "${GPU_BURN_DIR}" >/dev/null 2>&1 \
-                && echo "gpu_burn build succeeded" >&2 \
-                || echo "gpu_burn build failed — falling back" >&2
-        else
-            echo "git/make/nvcc not available — cannot build gpu_burn" >&2
-        fi
-    fi
-fi
+# ── trap: 종료 시 stress 프로세스 + Docker 컨테이너 정리 ──
+trap '
+    [[ -n "${STRESS_PID:-}" ]] && kill "${STRESS_PID}" 2>/dev/null || true
+    [[ -n "${DOCKER_CONTAINER_NAME:-}" ]] && docker stop "${DOCKER_CONTAINER_NAME}" 2>/dev/null || true
+' EXIT
 
+# 1) 호스트에 gpu_burn 바이너리가 있으면 직접 사용
 if command -v gpu_burn &>/dev/null; then
     TOOL="gpu_burn"
     gpu_burn "$DURATION" >/dev/null 2>&1 &
@@ -83,14 +67,60 @@ elif [[ -x "${GPU_BURN_DIR}/gpu_burn" ]]; then
     TOOL="gpu_burn"
     "${GPU_BURN_DIR}/gpu_burn" "$DURATION" >/dev/null 2>&1 &
     STRESS_PID=$!
-elif command -v dcgmi &>/dev/null; then
+
+# 2) nvcc 있으면 소스 빌드
+elif command -v nvcc &>/dev/null; then
+    echo "nvcc found — building gpu_burn from source" >&2
+    if [[ -n "${SUDO_PASSWORD:-}" ]] && command -v apt-get &>/dev/null; then
+        echo "$SUDO_PASSWORD" | sudo -S \
+            env DEBIAN_FRONTEND=noninteractive \
+            timeout 60 apt-get install -y -qq git make build-essential >/dev/null 2>&1 || true
+    fi
+    if command -v git &>/dev/null && command -v make &>/dev/null; then
+        rm -rf "${GPU_BURN_DIR}"
+        git clone --depth=1 https://github.com/wilicc/gpu-burn.git "${GPU_BURN_DIR}" >/dev/null 2>&1 \
+            && make -C "${GPU_BURN_DIR}" >/dev/null 2>&1 \
+            && echo "gpu_burn build succeeded" >&2 \
+            || echo "gpu_burn build failed — falling back" >&2
+    fi
+    if [[ -x "${GPU_BURN_DIR}/gpu_burn" ]]; then
+        TOOL="gpu_burn"
+        "${GPU_BURN_DIR}/gpu_burn" "$DURATION" >/dev/null 2>&1 &
+        STRESS_PID=$!
+    fi
+
+# 3) nvcc 없으면 Docker로 gpu_burn 실행
+elif command -v docker &>/dev/null; then
+    echo "nvcc not found — using Docker to run gpu_burn" >&2
+    GPU_BURN_IMAGE="gpu_burn_local"
+    if ! docker image inspect "${GPU_BURN_IMAGE}:latest" &>/dev/null 2>&1; then
+        echo "Building gpu-burn Docker image (one-time)..." >&2
+        docker build -t "${GPU_BURN_IMAGE}" \
+            https://github.com/wilicc/gpu-burn.git >/dev/null 2>&1 \
+            && echo "gpu_burn Docker image built" >&2 \
+            || { echo "Docker build failed — falling back" >&2; GPU_BURN_IMAGE=""; }
+    fi
+    if [[ -n "${GPU_BURN_IMAGE}" ]]; then
+        TOOL="gpu_burn_docker"
+        DOCKER_CONTAINER_NAME="gpu_burn_inspect_$$"
+        docker run --rm --gpus all --name "${DOCKER_CONTAINER_NAME}" \
+            "${GPU_BURN_IMAGE}" "$DURATION" >/dev/null 2>&1 &
+        STRESS_PID=$!
+    fi
+fi
+
+# 4) dcgmi
+if [[ "$TOOL" == "none" ]] && command -v dcgmi &>/dev/null; then
     TOOL="dcgmi"
     dcgmi diag -r 2 >/dev/null 2>&1 &
     STRESS_PID=$!
-elif python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
+fi
+
+# 5) pytorch
+if [[ "$TOOL" == "none" ]] && python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
     TOOL="pytorch"
     python3 -c "
-import time, torch, sys
+import time, torch
 n = 8192
 devs = [torch.device(f'cuda:{i}') for i in range(torch.cuda.device_count())]
 pairs = [(torch.randn(n, n, device=d), torch.randn(n, n, device=d)) for d in devs]
@@ -106,9 +136,6 @@ if [[ "$TOOL" == "none" ]]; then
     [[ "$STATUS" == "pass" ]] && STATUS="warn"
     DETAILS+=("WARN:no_stress_tool_temp_only")
 fi
-
-# ── trap: 종료 시 stress 프로세스 정리 ────────────────────
-trap '[[ -n "${STRESS_PID:-}" ]] && kill "${STRESS_PID}" 2>/dev/null || true' EXIT
 
 # ── 모니터링 루프 (10초 간격) ─────────────────────────────
 PEAK_TEMP=0
