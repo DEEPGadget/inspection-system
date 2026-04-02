@@ -1,20 +1,55 @@
 # Server Inspection System
 
-멀티워커 기반 GPU 서버 출고 검수 자동화 시스템.
+멀티워커 기반 GPU 서버(DG4/DG5, H200NVL, A100X) SW 설치 및 출고 전 검수 자동화 시스템.
 FastAPI + Celery + Redis + PostgreSQL + NFS.
 검수 대상 서버에 SSH 접속 → Python 스크립트 실행 → Claude API 판독 → 리포트 생성.
 
-## Architecture
+## 핵심 원칙
+**"LLM은 판단에만, 실행은 코드가"**
+- 정상 플로우: 에이전트 미호출, 토큰 0
+- 에이전트 호출 3가지: 실행 에러(Inspect), 경계값(Verify), 비정형 SW 요구(SW Planner)
+- 자세한 규칙 → `.claude/rules/agents.md`
+
+## Architecture v2
+
 ```
-[WebGUI/API :8000] → [Redis :6379] → [Inspect Worker] → NFS /srv/inspection/results/{job_id}/
-                                                              ↓ callback
-                                                       [Validate Worker + Claude API]
-                                                              ↓ pass
-                                                       [Report Worker] → PDF/XLSX
+[User: WebGUI/API] → job 제출 (서버정보 + 기대스펙 + H/W수동검수 + SW요구사항.md)
+        |
+        v
+[System: Preflight Runner] baseline 설치 → 설치비의존 항목 점검  [q_inspect]
+        | 실행 에러 시에만 → [Inspect Agent]
+        v
+[System: SW Install Runner] SW요구사항.md 기반 설치             [q_sw_install]
+        | 비정형/실패 시에만 → [SW Planner Agent]   (SW 요구사항 없으면 skip)
+        v
+[System: Post-install Runner] stress_tools 설치 → 본검수 + Stress  [q_inspect]
+        v
+[System: Rule Validator] threshold 기반 PASS/FAIL               [q_validate]
+        | 경계값/복합WARN 시에만 → [Verify Agent]
+        v
+[System: Cleanup Runner] 검수 전용 도구 제거                    [q_inspect]
+        v
+[System: Report Generator] Jinja2 → PDF/XLSX                   [q_report]
 ```
-Flower 모니터링: :5555 / PostgreSQL: :5432
+
+Flower: `:5555` / PostgreSQL: `:5432` / WebSocket: `:8000/ws`
+
+## 검수/설치 순서 정책
+
+- **SW 요구사항 있음**: Preflight → SW Install → Post-install (신규 출고)
+- **SW 요구사항 없음**: Preflight → Post-install (RMA / 재검수)
+
+## Phase 체계
+
+- **preflight**: 드라이버/SW 없이 실행 가능 (HW 인식, OS 상태)
+- **sw_install**: 유저 요구사항 기반 SW 설치
+- **post_install**: 드라이버/SW 의존 검수 + Stress
+- **collect**: 로그 수집
+
+Phase 1 (H/W 수동 검수 8항목)은 GUI 직접 입력, 시스템 자동화 범위 밖.
 
 ## Directory
+
 ```
 api/              FastAPI REST + WebSocket
   routers/        jobs.py, reports.py
@@ -78,6 +113,7 @@ tests/            pytest (test_api/, test_workers/, test_checks/)
 - PR 시 tests/ 포함 필수
 
 ## Key Design Decisions
+
 - Job ID: UUID v4
 - NFS base path: `/srv/inspection/` (results/, logs/, checks/)
 - SSH 키: `/etc/inspection/ssh_keys/` (600 권한)
@@ -107,8 +143,9 @@ tests/            pytest (test_api/, test_workers/, test_checks/)
 서브에이전트 기본 모델: sonnet / security-reviewer만 opus
 
 ## Commands
+
 ```bash
-docker compose up -d                        # 전체 기동
+docker compose up -d                           # 전체 기동
 docker compose up -d --scale worker_inspect=4  # 워커 스케일
 docker compose exec api alembic upgrade head   # DB 마이그레이션
 docker compose logs -f worker_inspect       # 로그
@@ -121,13 +158,23 @@ python3 checks/base/phase2_sw_basic/sw_gpu.py | python3 -m json.tool  # 스크�
 bash scripts/daily_check.sh                 # 코드 품질 수동 실행
 ```
 
-## 알려진 이슈 / 주의사항
-- Alembic: `sa.Enum(..., create_type=False)`는 `_on_table_create`에서 무시됨 → 반드시 `postgresql.ENUM(..., create_type=False)` + `DO $$ EXCEPTION WHEN duplicate_object $$` 패턴 사용
-- DB 초기화 시 반드시 `alembic_version` 테이블도 함께 DROP 후 재마이그레이션
+## 완료 워크플로우
+
+1. `pytest tests/ -x -q` + `ruff check . && ruff format --check .` 통과 필수
+2. `git add <관련파일>` → `git commit` → `git push -u origin <브랜치>`
+3. `gh pr create --fill --base main` (PR 생성까지 자동 수행, merge는 사용자 결정)
+
+main 직접 push 금지. 브랜치 명명: `feature/`, `fix/`, `chore/`
+
+## 알려진 이슈
+
+- Alembic ENUM: `postgresql.ENUM(..., create_type=False)` + `DO $$ EXCEPTION WHEN duplicate_object $$` 패턴 필수
+- DB 초기화: `alembic_version` 테이블도 함께 DROP 후 재마이그레이션
+- password: DB 미저장, 로그 마스킹, SSH 접속 후 즉시 폐기
 
 ## 환경변수
-.env 파일 참조. 필수: REDIS_URL, DATABASE_URL, ANTHROPIC_API_KEY
-나머지: .env.example에 기본값과 설명 포함
+
+`.env` 참조. 필수: `REDIS_URL`, `DATABASE_URL`, `ANTHROPIC_API_KEY`
 
 ## 현재 구현 상태
 - [x] 프로젝트 스캐폴딩
