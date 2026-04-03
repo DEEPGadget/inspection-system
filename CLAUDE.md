@@ -1,6 +1,6 @@
 # Server Inspection System
 
-멀티워커 기반 GPU 서버(DG4/DG5, H200NVL, A100X) SW 설치 및 출고 전 검수 자동화 시스템.
+멀티워커 기반 DeepGadget 서버(dg5W/dg5R/dg5W-TT 외 단종 제품) SW 설치 및 출고 전 검수 자동화 시스템.
 FastAPI + Celery + Redis + PostgreSQL + NFS.
 검수 대상 서버에 SSH 접속 → Python 스크립트 실행 → Claude API 판독 → 리포트 생성.
 
