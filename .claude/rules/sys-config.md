@@ -87,15 +87,13 @@ sudo nvidia-smi -pm 1
 ```bash
 cat <<'EOF' | sudo tee /etc/systemd/system/nvidia-power.service
 [Unit]
-Description=NVIDIA GPU Power Settings
+Description=NVIDIA GPU Persistence Mode
 After=nvidia-persistenced.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/bin/nvidia-smi -pm 1
-ExecStart=/usr/bin/nvidia-smi -pl 350
-ExecStart=/usr/bin/nvidia-smi -lgc 1400,1400
 
 [Install]
 WantedBy=multi-user.target
@@ -105,6 +103,27 @@ sudo systemctl enable --now nvidia-power.service
 ```
 
 **Ubuntu / Rocky 동일.**
+
+### Power Limit / Clock Lock (선택, GPU 모델별 적용)
+
+`-pl`(power limit)과 `-lgc`(GPU clock lock)는 GPU 모델마다 허용 범위가 다르므로 **서비스에 포함하지 않음**.  
+적용이 필요한 경우 해당 GPU의 지원 범위를 먼저 확인 후 수동 설정:
+
+```bash
+# 허용 power limit 범위 확인
+nvidia-smi --query-gpu=power.min_limit,power.max_limit --format=csv,noheader
+
+# power limit 설정 (범위 내 값으로)
+sudo nvidia-smi -pl <watts>
+
+# 지원 clock 목록 확인
+nvidia-smi --query-supported-clocks=gr --format=csv,noheader | head
+
+# GPU clock lock (지원 아키텍처만)
+sudo nvidia-smi -lgc <min_mhz>,<max_mhz>
+```
+
+SW Planner Agent가 `sw_requirements.md`에 power limit 또는 clock lock 지시가 있을 때만 적용.
 
 ---
 
@@ -165,5 +184,10 @@ cpupower frequency-info | grep "The governor"
 nvidia-smi --query-gpu=persistence_mode --format=csv,noheader
 
 # 자동 업데이트 비활성화 확인 (Ubuntu)
-systemctl is-enabled unattended-upgrades apt-daily.timer apt-daily-upgrade.timer
+# is-enabled는 비활성화 시 exit 1 — 루프로 명시적 확인
+for unit in unattended-upgrades apt-daily.timer apt-daily-upgrade.timer; do
+    systemctl is-enabled "$unit" 2>/dev/null \
+        && echo "$unit: WARN (still enabled)" \
+        || echo "$unit: OK (disabled)"
+done
 ```
