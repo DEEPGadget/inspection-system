@@ -12,10 +12,19 @@ import enum
 
 class JobStatus(str, enum.Enum):
     pending = "pending"
-    inspecting = "inspecting"
+    preflight = "preflight"
+    sw_install = "sw_install"
+    rebooting = "rebooting"
+    post_install = "post_install"
     validating = "validating"
+    cleanup = "cleanup"
     reporting = "reporting"
     pass_ = "pass"
+    failed = "failed"
+    rejected = "rejected"
+    report_failed = "report_failed"
+    # deprecated — DB 값 보존, 코드에서 미사용
+    inspecting = "inspecting"
     fail = "fail"
     error = "error"
 
@@ -33,10 +42,18 @@ class Job(Base):
     status: Mapped[str] = mapped_column(
         Enum(
             "pending",
-            "inspecting",
+            "preflight",
+            "sw_install",
+            "rebooting",
+            "post_install",
             "validating",
+            "cleanup",
             "reporting",
             "pass",
+            "failed",
+            "rejected",
+            "report_failed",
+            "inspecting",
             "fail",
             "error",
             name="job_status",
@@ -47,6 +64,7 @@ class Job(Base):
     target_host: Mapped[str] = mapped_column(String(255), nullable=False)
     target_user: Mapped[str] = mapped_column(String(64), nullable=False, default="root")
     product_profile: Mapped[str] = mapped_column(String(128), nullable=False)
+    sw_requirements: Mapped[str | None] = mapped_column(Text, nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     result_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

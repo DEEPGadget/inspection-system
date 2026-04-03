@@ -13,8 +13,14 @@ git fetch origin
 git checkout "$BRANCH"
 git pull origin "$BRANCH"
 
+echo "=== Stopping API and workers ==="
+docker compose stop api worker_inspect worker_validate worker_report
+
 echo "=== Building containers ==="
 docker compose build --parallel
+
+echo "=== Running migrations ==="
+docker compose run --rm api alembic upgrade head
 
 echo "=== Rolling restart ==="
 docker compose up -d --no-deps api

@@ -32,6 +32,7 @@ _TERMINAL = frozenset({"pass", "fail", "error"})
 @router.websocket("/jobs/{job_id}")
 async def ws_job_status(websocket: WebSocket, job_id: str) -> None:
     """Job 상태 변경 실시간 스트림."""
+    # TODO(C-2): W-5 API 인증 구현 시 WebSocket 토큰 검증 추가 (query param ?token=...)
     try:
         uid = uuid.UUID(job_id)
     except ValueError:

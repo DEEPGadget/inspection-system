@@ -75,7 +75,7 @@ async def _apt_install(
     cmd = f"DEBIAN_FRONTEND=noninteractive sudo -S apt-get install -y {pkg_str} 2>&1"
     result = await conn.run(
         cmd,
-        input=f"{sudo_password}\n",
+        input=f"{sudo_password}\n",  # TODO(C-1): ssh_client.py 리팩토링 시 SecretStr.get_secret_value() 로 교체
         check=False,
         timeout=timeout,
     )
@@ -222,7 +222,7 @@ async def _async_inspect_inner(
                 scripts: list[str] = phase_cfg.get("scripts", [])
                 phase_env: dict[str, str] = dict(phase_cfg.get("env", {}))
                 if sudo_password:
-                    phase_env["SUDO_PASSWORD"] = sudo_password
+                    phase_env["SUDO_PASSWORD"] = sudo_password  # TODO(C-1): ssh_client.py 리팩토링 시 SecretStr 처리 + 즉시 폐기 패턴 적용
                 for script_name in scripts:
                     local_script = _script_path(phase_dir, script_name)
                     if not local_script.exists():
