@@ -13,7 +13,7 @@
 
 ```bash
 # 1. API/워커 중지
-docker compose stop api worker_inspect worker_validate worker_report worker_sw_install
+docker compose stop api worker_inspect worker_validate worker_report
 
 # 2. 마이그레이션 적용
 docker compose run --rm api alembic upgrade head
