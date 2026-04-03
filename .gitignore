@@ -12,4 +12,10 @@ node_modules/
 .DS_Store
 *.log
 /srv/
-.claude/
+.claude/*
+!.claude/rules/
+!.claude/rules/**
+!.claude/commands/
+!.claude/commands/**
+!.claude/skills/
+!.claude/skills/**
