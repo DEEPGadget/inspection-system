@@ -14,5 +14,8 @@ node_modules/
 /srv/
 .claude/*
 !.claude/rules/
+!.claude/rules/**
 !.claude/commands/
+!.claude/commands/**
 !.claude/skills/
+!.claude/skills/**
