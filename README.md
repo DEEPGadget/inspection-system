@@ -7,67 +7,77 @@ GPU 서버 출고 전 검수를 자동화하는 멀티워커 파이프라인 시
 
 ## 전체 아키텍처 (v2)
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                          Client / CI                                 │
-│                    REST API  /  WebSocket                            │
-└───────────────────────────────┬─────────────────────────────────────┘
-                                │ HTTP :8000
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                        FastAPI  (api/)                               │
-│                                                                      │
-│  POST /api/jobs/          GET /api/jobs/{id}/                        │
-│  GET  /api/reports/{id}/pdf    GET /api/reports/{id}/xlsx            │
-│  WS   /ws/jobs/{id}       ← 실시간 상태 푸시                         │
-└───────┬───────────────────────────────────────┬─────────────────────┘
-        │ Celery task dispatch                  │ asyncpg
-        ▼                                       ▼
-┌───────────────┐                    ┌─────────────────────┐
-│  Redis :6379  │                    │  PostgreSQL :5432    │
-│  (broker /    │                    │  jobs               │
-│   result)     │                    │  check_results       │
-└───┬───────────┘                    │  reports             │
-    │                                └─────────────────────┘
-    │ q_inspect                              ▲  ▲  ▲
-    ▼                                        │  │  │
-┌─────────────────────────────────────────┐  │  │  │
-│        worker_inspect  (×4)             │  │  │  │
-│                                         │  │  │  │
-│  1. SSH 접속 (asyncssh)                 │  │  │  │
-│  2. pre_install (apt) → 검수 도구 설치  │  │  │  │
-│  3. 스크립트 SFTP 전송                   │  │  │  │
-│  4. python3 실행 → JSON 수집            │──┘  │  │
-│  5. NFS 저장 + DB 저장                  │     │  │
-│  6. q_validate 에 체인                  │     │  │
-└──────────────────┬──────────────────────┘     │  │
-                   │ q_validate                  │  │
-                   ▼                             │  │
-┌─────────────────────────────────────────┐     │  │
-│        worker_validate  (×2)            │     │  │
-│                                         │     │  │
-│  1. NFS에서 JSON 결과 읽기              │     │  │
-│  2. Claude API 판독 (Anthropic SDK)     │─────┘  │
-│  3. pass/fail/warn 판정                 │        │
-│  4. DB 업데이트 + q_report 에 체인      │        │
-└──────────────────┬──────────────────────┘        │
-                   │ q_report                       │
-                   ▼                                │
-┌─────────────────────────────────────────┐        │
-│        worker_report  (×2)              │        │
-│                                         │        │
-│  1. DB에서 결과 조회                    │        │
-│  2. PDF 생성 (WeasyPrint + Jinja2)      │────────┘
-│  3. XLSX 생성 (openpyxl)               │
-│  4. NFS 저장 + DB 업데이트              │
-└─────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Client(["Client / WebGUI\n서버정보 + 기대스펙 + SW요구사항.md"])
 
-NFS  /srv/inspection/
-  results/{job_id}/
-    inspect_raw/     ← 스크립트 원본 JSON 출력
-    sw_requirements.md
-    report.pdf
-    report.xlsx
+    subgraph api["FastAPI  :8000"]
+        API["POST /api/jobs/\nGET  /api/jobs/{id}/\nGET  /api/reports/{id}/pdf|xlsx\nWS   /ws/jobs/{id}"]
+    end
+
+    subgraph infra["Infrastructure"]
+        Redis["Redis :6379\nbroker / result\npub-sub(WS)"]
+        PG["PostgreSQL :5432\njobs / check_results / reports"]
+        NFS["NFS  /srv/inspection/\nresults/{job_id}/inspect_raw/*.json\nresults/{job_id}/sw_requirements.md\nresults/{job_id}/report.pdf|xlsx"]
+    end
+
+    subgraph normal["정상 플로우  (토큰 0)"]
+        direction TB
+        PRE["Preflight Runner  q_inspect ×4\nbaseline 패키지 설치\npreflight/ 스크립트 실행\nJSON → NFS + DB"]
+        SWI["SW Install Runner  q_sw_install ×2\nsw_requirements.md 파싱\ndriver / cuda / torch 설치\n설치 검증 + 재시도"]
+        POST["Post-install Runner  q_inspect ×4\nstress_tools 설치\npost_install/ 스크립트 실행\nJSON → NFS + DB"]
+        RV["Rule Validator  q_validate ×2\nvalidation.rules threshold 비교\n명확한 PASS / FAIL → 토큰 0"]
+        CL["Cleanup Runner  q_inspect ×4\nstress-ng 등 검수전용 도구 제거\n/opt/gpu-burn 등 디렉토리 정리"]
+        RPT["Report Generator  q_report ×2\nJinja2 → PDF  WeasyPrint\nXLSX  openpyxl\nNFS 저장 + DB 기록"]
+
+        PRE -->|SW요구사항 있을 때| SWI
+        PRE -->|SW요구사항 없을 때| POST
+        SWI --> POST
+        POST --> RV
+        RV -->|PASS / FAIL 확정| CL
+        CL --> RPT
+    end
+
+    subgraph agents["Agent Layer  (예외 경로만 호출)"]
+        direction TB
+        IA["🤖 Inspect Agent\nSSH실패·스크립트에러·JSON파싱에러\n에러 진단 + 수정 액션 JSON 반환\nmax_tokens 1024"]
+        SPA["🤖 SW Planner Agent\n비정형 SW요구·버전 호환 판정 불가·설치실패\n요구사항 구조화 + 설치계획 JSON 생성\nmax_tokens 1024"]
+        VA["🤖 Verify Agent\nagent_zone 경계값·복합 WARN 3개 초과\n경계값 종합 판단 + 복합 WARN 분석\nmax_tokens 512"]
+        GW["agent_gateway.py\n호출 조건 판단\ncompact input 구성\n결과 → 시스템 액션 변환"]
+
+        IA --> GW
+        SPA --> GW
+        VA --> GW
+    end
+
+    Client -->|HTTP :8000| API
+    API -->|Celery dispatch| Redis
+    API -->|asyncpg| PG
+    Redis --> PRE
+
+    PRE -.->|"실행 에러 시에만 ──────────────────────────────────────"| IA
+    SWI -.->|"비정형 요구·설치 실패 시에만 ─────────────────────────"| SPA
+    RV  -.->|"경계값·복합 WARN 시에만 ──────────────────────────────"| VA
+    GW  -.->|복구 액션 반환| PRE
+    GW  -.->|설치계획 JSON 반환| SWI
+    GW  -.->|판정 결과 반환| RV
+
+    PRE --> PG
+    PRE --> NFS
+    SWI --> PG
+    POST --> PG
+    POST --> NFS
+    RV --> PG
+    RPT --> PG
+    RPT --> NFS
+```
+
+### Job 상태 전이
+
+```
+pending → preflight → sw_install* → post_install → validating → cleanup → reporting → pass | fail
+                                                                                     ↘ error
+* SW 요구사항 있을 때만
 ```
 
 ### Job 상태 전이
