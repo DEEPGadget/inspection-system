@@ -19,6 +19,7 @@ async def create_job(body: JobCreate, db: AsyncSession = Depends(get_db)):
         target_host=body.target_host,
         target_user=body.target_user,
         product_profile=body.product_profile,
+        sw_requirements=body.sw_requirements,
     )
     db.add(job)
     await db.flush()  # id 확보
@@ -28,7 +29,7 @@ async def create_job(body: JobCreate, db: AsyncSession = Depends(get_db)):
 
     task = inspect_server.apply_async(
         args=[str(job.id), job.target_host, job.target_user, job.product_profile,
-              body.sudo_password],
+              body.sudo_password.get_secret_value() if body.sudo_password else None],
         queue="q_inspect",
     )
     job.celery_task_id = task.id
