@@ -119,7 +119,6 @@ pending
 주요 스키마 필드:
 - `sudo_password: SecretStr` — 로그에 `**********` 출력
 - `sw_requirements: str | None` — 자유 형식 Markdown SW 요구사항
-- `install_policy: str` — `auto | skip | force`
 
 ---
 
@@ -239,7 +238,7 @@ pending
 > Phase 1과 병렬 가능. Phase 3 이전 완료 필요.
 
 - `api/models.py`: `Job.sw_requirements` Text 컬럼 + JobStatus 상태 추가 (`preflight`, `sw_install`, `post_install`, `cleanup`)
-- `api/schemas.py`: `JobCreate`에 `sw_requirements`, `install_policy` 필드 추가
+- `api/schemas.py`: `JobCreate`에 `sw_requirements` 필드 추가
 - `alembic/versions/`: 마이그레이션 파일 생성
 
 ### Phase 3 — Workers 공통 인프라
