@@ -14,18 +14,17 @@ git checkout "$BRANCH"
 git pull origin "$BRANCH"
 
 echo "=== Stopping API and workers ==="
-docker compose stop api worker_inspect worker_sw_install worker_validate worker_report
-
-echo "=== Running migrations ==="
-docker compose run --rm api alembic upgrade head
+docker compose stop api worker_inspect worker_validate worker_report
 
 echo "=== Building containers ==="
 docker compose build --parallel
 
+echo "=== Running migrations ==="
+docker compose run --rm api alembic upgrade head
+
 echo "=== Rolling restart ==="
 docker compose up -d --no-deps api
 docker compose up -d --no-deps --scale worker_inspect=4 worker_inspect
-docker compose up -d --no-deps --scale worker_sw_install=2 worker_sw_install
 docker compose up -d --no-deps --scale worker_validate=2 worker_validate
 docker compose up -d --no-deps worker_report
 docker compose up -d --no-deps flower
