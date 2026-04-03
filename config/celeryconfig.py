@@ -5,6 +5,8 @@ result_backend = settings.redis_url.replace("/0", "/1")
 
 task_routes = {
     "workers.inspect.*": {"queue": "q_inspect"},
+    # TODO(C-5): workers.sw_install 구현 시 아래 라우팅 활성화
+    # "workers.sw_install.*": {"queue": "q_sw_install"},
     "workers.validate.*": {"queue": "q_validate"},
     "workers.report.*": {"queue": "q_report"},
 }

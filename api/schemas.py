@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 
 # --- Job ---
@@ -11,7 +11,8 @@ class JobCreate(BaseModel):
     target_host: str = Field(..., description="검수 대상 서버 IP 또는 호스트명")
     target_user: str = Field("root", description="SSH 접속 유저")
     product_profile: str = Field(..., description="제품 프로파일 이름 (checks/profiles/ 기준)")
-    sudo_password: str | None = Field(None, description="sudo 비밀번호 (스크립트 내 권한 필요 작업용, DB 미저장)")
+    sudo_password: SecretStr | None = Field(None, description="sudo 비밀번호 (스크립트 내 권한 필요 작업용, DB 미저장)")
+    sw_requirements: str | None = Field(None, description="SW 요구사항 원문 (sw_requirements.md 내용)")
 
 
 class JobResponse(BaseModel):
@@ -20,6 +21,7 @@ class JobResponse(BaseModel):
     target_host: str
     target_user: str
     product_profile: str
+    sw_requirements: str | None
     celery_task_id: str | None
     result_path: str | None
     error_message: str | None

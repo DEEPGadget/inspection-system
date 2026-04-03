@@ -1,4 +1,5 @@
 {
+  "_TODO_C4": "inspect.py 리팩토링 시 phase 구조 → preflight/post_install/collect 구조로 전면 재작성",
   "profile_name": "gpu_server",
   "product_line": "gpu",
   "pre_install": {
