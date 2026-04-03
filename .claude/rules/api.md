@@ -33,8 +33,7 @@ class JobCreate(BaseModel):
     target_user: str
     product_profile: str
     sudo_password: SecretStr          # 자동 마스킹
-    sw_requirements: str | None = None  # 자유 형식 MD
-    install_policy: str = "auto"      # auto | skip | force
+    sw_requirements: str | None = None  # 자유 형식 MD (있으면 SW Install 단계 실행)
 ```
 
 - `str | None` 형식 사용 (`Optional` 금지)
