@@ -12,7 +12,7 @@
 ## 적용 순서 (배포 시 매번)
 
 ```bash
-# 1. API/워커 중지
+# 1. API/워커 중지 (worker_sw_install은 구현 후 추가)
 docker compose stop api worker_inspect worker_validate worker_report
 
 # 2. 마이그레이션 적용
@@ -134,7 +134,7 @@ docker compose exec api alembic upgrade head
 운영에서 절대 실행 금지.
 
 ```bash
-docker compose exec postgres psql -U postgres -d inspection_db -c "
+docker compose exec db psql -U inspector -d inspection -c "
     DROP TABLE IF EXISTS reports, check_results, jobs CASCADE;
     DROP TABLE IF EXISTS alembic_version;
     DROP TYPE IF EXISTS job_status;
