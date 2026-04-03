@@ -1,10 +1,7 @@
 # Server Inspection System
 
-멀티워커 기반 GPU 서버(DG4/DG5, H200NVL, A100X) SW 설치 및 출고 전 검수 자동화 시스템.
-
-**핵심 원칙: "LLM은 판단에만, 실행은 코드가"**
-- 정상 플로우: 에이전트 미호출, 토큰 0
-- 에이전트 호출 3가지 경우에만: 실행 에러(Inspect), 경계값(Verify), 비정형 SW 요구(SW Planner)
+GPU 서버 출고 전 검수를 자동화하는 멀티워커 파이프라인 시스템.
+대상 서버에 SSH로 접속하여 Python 스크립트를 실행하고, Claude API로 결과를 판독한 뒤 PDF/XLSX 리포트를 생성합니다.
 
 ---
 
@@ -130,48 +127,12 @@ pending
 
 #### `inspect.py` — Preflight / Post-install / Cleanup Runner
 - 큐: `q_inspect` / concurrency: 4
-- `phase` 파라미터로 preflight·post_install·cleanup 분기
-- `checks/profiles/{profile}.json`에서 스크립트 목록·timeout·env 로드
-- SSH 접속 → SFTP 스크립트 전송 → `python3` 실행 → JSON 수집
-- 결과 NFS(`inspect_raw/`) + DB(`check_results`) 저장
-- 실행 에러 시 `agent_gateway.py`를 통해 Inspect Agent 호출 후 복구 재시도
-
-#### `sw_install.py` — SW Install Runner
-- 큐: `q_sw_install` / concurrency: 2 (rate limit 대응)
-- `sw_planner.py`가 생성한 설치계획 JSON 기반 실행
-- driver/cuda/torch 순서 보장, 설치 검증, 실패 시 재시도
-- 비정형 요구·실패 시 `agent_gateway.py`를 통해 SW Planner Agent 호출
-
-#### `sw_planner.py` — SW 설치 계획 오케스트레이션
-- `jobs.sw_requirements` (자유 형식 MD) → 구조화된 설치계획 JSON 변환
-- driver-cuda-torch 버전 매트릭스 결정
-- SW Planner Agent 호출 조건 판단
-
-#### `validate.py` — Rule Validator + Verify Agent 오케스트레이터
-- 큐: `q_validate` / concurrency: 2
-- `rule_validator.py` 먼저 실행 (토큰 0)
-- 경계값·복합WARN 시에만 `agent_gateway.py`를 통해 Verify Agent 호출
-
-#### `rule_validator.py` — Threshold 판정 (토큰 0)
-- `validation.rules` 배열 순회, threshold 비교
-- `fail_above/below/if/if_not` 키 평가 → PASS/FAIL 직접 판정
-- `agent_zone` 해당 항목 및 `warn_count > threshold` → Verify Agent 트리거 반환
-
-#### `agent_gateway.py` — 에이전트 호출 판단
-- 에이전트 종류·호출 조건 판단
-- 실패/경계 항목만 추려 compact input 구성 (토큰 최소화)
-- 호출 결과 → 시스템 액션 JSON 변환
-
-#### `ssh_client.py` — SSH 접속 관리
-- asyncssh 기반, SecretStr 지원
-- 접속 완료 후 password 즉시 폐기
-- key 우선 (`/etc/inspection/ssh_keys/{host}` → `default`), password fallback
-
-#### `report.py` — PDF/XLSX 생성
-- 큐: `q_report` / concurrency: 2
-- Jinja2 + WeasyPrint → PDF
-- openpyxl → XLSX (스타일 포함)
-- NFS 저장 + DB `reports` 레코드 기록
+- `checks/profiles/{profile}.json` 에서 실행할 스크립트 목록 및 `pre_install` 패키지 로드
+- 검수 전 `conn.run(input=password)` 방식으로 apt 패키지 자동 설치 (TTY 없이 sudo 동작)
+- asyncssh로 대상 서버에 SFTP 전송 후 `python3` 실행
+- 프로파일 phase별 `timeout` 필드를 `conn.run(timeout=N)`에 적용 (hang 방지)
+- 결과 JSON을 NFS(`inspect_raw/`) 및 DB(`check_results`)에 저장
+- 완료 후 `validate_results` 태스크를 `q_validate`에 체인
 
 ---
 
@@ -195,46 +156,32 @@ pending
 {"check": "sw_gpu_hw", "status": "pass|fail|warn", "detail": "key=val|key2=val2"}
 ```
 
-#### preflight/ — 드라이버 설치 전 실행 가능한 항목
+| Phase | 스크립트 | 검사 항목 |
+|---|---|---|
+| phase2 | `sw_cpu.py` | CPU 모델·코어·주파수·온도 |
+| phase2 | `sw_gpu.py` | GPU 모델·VRAM·온도·전력·ECC·NVLink |
+| phase2 | `sw_memory.py` | 메모리 용량·DIMM·ECC·NUMA |
+| phase2 | `sw_storage.py` | 디스크 목록·NVMe 상태·사용률 |
+| phase2 | `sw_network.py` | NIC 링크·속도·MTU |
+| phase3 | `sw_power_mgmt.py` | sleep.target masked·CPU governor·C-state |
+| phase3 | `sw_auto_update.py` | unattended-upgrades 비활성화 확인 |
+| phase4 | `stress_gpu.py` | GPU burn-in (nvidia-smi dmon, 기본 300s) |
+| phase4 | `stress_cpu.py` | CPU 부하 테스트 (stress-ng/python3 fallback, 기본 120s) |
+| phase5 | `nccl_bandwidth.py` | AllReduce 대역폭 (all_reduce_perf / torchrun) |
+| phase6 | `sw_os_version.py` | OS·커널·필수 패키지 버전 |
+| phase7 | `collect_all_logs.py` | dmesg·syslog 수집 |
 
-| 스크립트 | 검사 항목 |
-|---------|---------|
-| `sw_gpu_hw.py` | lspci — GPU 수량·PCIe width·speed (driver 불필요) |
-| `sw_cpu.py` | /proc/cpuinfo — 모델·코어·주파수·온도 |
-| `sw_memory.py` | /proc/meminfo — 용량·DIMM·ECC·NUMA |
-| `sw_storage_hw.py` | lsblk — 디스크 목록·용량·RAID (nvme-cli 불필요) |
-| `sw_network.py` | NIC 링크·속도·MTU |
-| `sw_os_version.py` | OS·커널·필수 패키지 버전 |
-| `sw_power_mgmt.py` | sleep.target masked·CPU governor·C-state |
-| `sw_auto_update.py` | unattended-upgrades 비활성화 확인 |
+> 모든 스크립트는 Python 3 stdlib만 사용. 원격 서버에 pip 설치 불필요.
 
-#### post_install/ — 드라이버/SW 설치 후 실행
-
-| 스크립트 | 검사 항목 |
-|---------|---------|
-| `sw_gpu_sw.py` | nvidia-smi — driver·VRAM·온도·ECC·NVLink |
-| `sw_storage_sw.py` | nvme-cli/smartctl — NVMe 헬스·SMART |
-| `stress_gpu.py` | GPU burn-in (기본 300s, nvidia-smi dmon) |
-| `stress_cpu.py` | CPU 부하 테스트 (stress-ng/python3 fallback, 기본 120s) |
-| `nccl_bandwidth.py` | AllReduce 대역폭 (all_reduce_perf / torchrun) |
-
-#### collect/ — 로그 수집
-
-| 스크립트 | 검사 항목 |
-|---------|---------|
-| `collect_all_logs.py` | dmesg·journalctl·XID 수집 |
-
-#### 판정 임계값
-
-| 항목 | FAIL 기준 | agent_zone (Verify 트리거) |
-|------|----------|--------------------------|
-| GPU 최고 온도 | > 87°C | > 75°C |
-| CPU 최고 온도 | > 100°C | > 85°C |
-| ECC uncorrected 에러 | > 0 | — |
-| NCCL 2GPU NVLink busbw | < 30 GB/s | < 25 GB/s |
-| NCCL 4GPU AllReduce busbw | < 5 GB/s | < 3 GB/s |
-| sleep.target | masked 아님 | — |
-| unattended-upgrades | 활성화 | — |
+**판정 임계값**
+| 항목 | 기준 |
+|---|---|
+| GPU 최고 온도 | > 87°C → FAIL |
+| CPU 최고 온도 | > 100°C → FAIL |
+| NCCL 4GPU AllReduce busbw | < 5 GB/s → FAIL |
+| NCCL 2GPU NVLink busbw | < 30 GB/s → FAIL |
+| sleep.target | masked 아님 → FAIL |
+| unattended-upgrades | 활성화 → FAIL |
 
 ---
 
@@ -246,29 +193,17 @@ pending
 {
   "profile_name": "gpu_server",
   "pre_install": {
-    "baseline": ["pciutils", "nvme-cli", "ipmitool", "lm-sensors"],
-    "stress_tools": ["stress-ng"]
+    "enabled": true,
+    "timeout": 300,
+    "packages": ["stress-ng", "lm-sensors"]
   },
   "phases": {
-    "preflight": { "scripts": ["sw_gpu_hw", "sw_cpu", ...] },
-    "post_install": {
-      "scripts": ["sw_gpu_sw", "stress_gpu", "nccl_bandwidth", ...],
+    "phase4_stress": {
+      "enabled": true,
+      "scripts": ["stress_gpu", "stress_cpu"],
       "timeout": 7200,
-      "env": { "GPU_BURNIN_DURATION": "300" }
-    },
-    "collect": { "scripts": ["collect_all_logs"] }
-  },
-  "validation": {
-    "rules": [
-      {"check": "sw_gpu_sw", "metric": "gpu_max_temp_c", "fail_above": 87, "agent_zone_above": 75},
-      ...
-    ],
-    "agent_trigger": { "warn_count_threshold": 3 }
-  },
-  "cleanup": {
-    "remove_packages": ["stress-ng"],
-    "remove_dirs": ["/opt/gpu-burn", "/opt/nccl-tests"],
-    "on_failure": "warn"
+      "env": { "GPU_BURNIN_DURATION": "300", "CPU_BURNIN_DURATION": "120" }
+    }
   }
 }
 ```
@@ -354,17 +289,30 @@ curl -sL -X POST http://localhost:8000/api/jobs/ \
     "target_host": "10.100.1.5",
     "target_user": "deepgadget",
     "product_profile": "gpu_server",
-    "sudo_password": "password",
-    "sw_requirements": "# SW Requirements\n- CUDA 12.4\n- PyTorch 2.3"
-  }'
+    "sudo_password": "password"
+  }' | python3 -m json.tool
+```
 
-# 상태 확인
-curl -sL http://localhost:8000/api/jobs/{job_id}/
-websocat ws://localhost:8000/ws/jobs/{job_id}
+### 5. 상태 확인
 
-# 리포트 다운로드
-curl -sLO http://localhost:8000/api/reports/{job_id}/pdf
-curl -sLO http://localhost:8000/api/reports/{job_id}/xlsx
+```bash
+JOB_ID=<위에서 반환된 id>
+
+# REST 폴링
+curl -sL http://localhost:8000/api/jobs/$JOB_ID/ | python3 -m json.tool
+
+# WebSocket 실시간 구독
+websocat ws://localhost:8000/ws/jobs/$JOB_ID
+
+# 리포트 다운로드 (완료 후)
+curl -sLO http://localhost:8000/api/reports/$JOB_ID/pdf
+curl -sLO http://localhost:8000/api/reports/$JOB_ID/xlsx
+```
+
+### 6. 워커 스케일
+
+```bash
+sudo docker compose up -d --scale worker_inspect=4
 ```
 
 ---
@@ -387,8 +335,9 @@ docker compose exec redis redis-cli LLEN q_inspect
 ```bash
 pytest tests/ -x -q
 ruff check . && ruff format --check .
-python3 checks/base/preflight/sw_gpu_hw.py | python3 -m json.tool
-rtk gain
+
+# 스크립트 단독 검증 (로컬 실행)
+python3 checks/base/phase2_sw_basic/sw_gpu.py | python3 -m json.tool
 ```
 
 ---
