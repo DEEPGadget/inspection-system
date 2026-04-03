@@ -1,6 +1,6 @@
 # Server Inspection System
 
-멀티워커 기반 GPU 서버(DG4/DG5, H200NVL, A100X) SW 설치 및 출고 전 검수 자동화 시스템.
+멀티워커 기반 DeepGadget 서버(dg5W/dg5R/dg5W-TT 외 단종 제품) SW 설치 및 출고 전 검수 자동화 시스템.
 FastAPI + Celery + Redis + PostgreSQL + NFS.
 
 ## 핵심 원칙
@@ -153,8 +153,8 @@ main 직접 push 금지. 브랜치 명명: `feature/`, `fix/`, `chore/`
 - [ ] `workers/sw_planner.py` + `workers/sw_install.py`: SW 설치 파이프라인
 - [ ] `workers/inspect.py`: preflight/post-install 단계 분리 + cleanup
 - [ ] `workers/app.py`: q_sw_install 큐 추가
-- [ ] `api/schemas.py`: sw_requirements + install_policy 필드
-- [ ] `api/models.py`: Job.sw_requirements Text 컬럼 + 상태 확장
+- [x] `api/schemas.py`: sw_requirements + SecretStr 필드 (`install_policy` 제거됨 — sw_requirements 유무로만 분기)
+- [x] `api/models.py`: Job.sw_requirements Text 컬럼 + JobStatus 8개 확장
+- [x] Alembic 마이그레이션: sw_requirements + JobStatus 상태 추가 (`a1b2c3d4`)
 - [ ] `config/logging.py`: structlog 민감필드 마스킹
-- [ ] Alembic 마이그레이션: sw_requirements + JobStatus 상태 추가
 - [ ] WebGUI 프론트엔드

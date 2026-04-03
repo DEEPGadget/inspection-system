@@ -1,0 +1,61 @@
+# github/workflows/claude-fix.yml
+name: Claude Auto-Fix on Review
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  auto-fix:
+    if: |
+      github.event.review.state == 'changes_requested' ||
+      contains(github.event.comment.body, '@claude fix')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            리뷰 코멘트를 분석하고 요청된 변경사항을 직접 수정해줘.
+            수정 후 변경 내용을 요약해서 PR에 코멘트로 남겨줘.
+            .claude/rules/ 의 규칙을 반드시 준수해.thub/workflows/claude-fix.yml
+name: Claude Auto-Fix on Review
+
+on:
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  auto-fix:
+    if: |
+      github.event.review.state == 'changes_requested' ||
+      contains(github.event.comment.body, '@claude fix')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            리뷰 코멘트를 분석하고 요청된 변경사항을 직접 수정해줘.
+            수정 후 변경 내용을 요약해서 PR에 코멘트로 남겨줘.
+            .claude/rules/ 의 규칙을 반드시 준수해.gg
