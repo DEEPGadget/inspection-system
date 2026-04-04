@@ -58,6 +58,8 @@ pending
 | `failed` | 시스템/스크립트 오류 또는 Rule Validator FAIL 판정 |
 | `rejected` | Verify Agent 불합격 판정 (경계값 검토 후 판단) |
 | `report_failed` | 리포트 생성 실패 (검수 결과 자체는 유효) |
+| ~~`inspecting`~~ | v1 deprecated — DB 값 유지, 코드에서 미사용 |
+| ~~`error`~~ | v1 deprecated — DB 값 유지, 코드에서 미사용 |
 
 `failed`와 `rejected`는 반드시 구분. `rejected`는 "에이전트가 검토해서 내린 불합격"임을 리포트에 명시.
 
@@ -123,13 +125,12 @@ def run_phase(self, job_id: str, ...):
 
 ```
 # 컨테이너 내부
-/app/logs/{job_id}/{task}.jsonl
+/srv/inspection/logs/{job_id}/{task}.jsonl
 
 # docker-compose.yml 볼륨 마운트
-./logs:/app/logs
+inspection_logs:/srv/inspection/logs
 
-# 호스트 경로
-~/workspace/projects/inspection-system/logs/{job_id}/
+# NFS export 대상 외 (민감 에러 로그 포함 가능성으로 내부 전용)
 ```
 
 task 이름별 파일 분리:
