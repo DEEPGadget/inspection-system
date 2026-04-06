@@ -46,6 +46,8 @@ Flower: `:5555` / PostgreSQL: `:5432` / WebSocket: `:8000/ws`
 
 ## Directory
 
+> v2 리팩토링 진행 중. 현재 실재 파일 구조 → `handoff/current-state.md`
+
 ```
 api/
   routers/           jobs.py, reports.py

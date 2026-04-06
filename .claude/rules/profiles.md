@@ -6,6 +6,9 @@
 
 ## 전체 구조 (gpu_server.json 기준)
 
+> 아래 예시는 v2 목표 구조. 실제 파일(`checks/profiles/gpu_server.json`)은
+> `inspect.py` v2 리팩토링(C-4) 완료 후 재작성 예정.
+
 ```json
 {
   "profile_name": "gpu_server",
