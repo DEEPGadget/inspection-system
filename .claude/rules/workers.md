@@ -17,11 +17,11 @@
 | `inspect.py` | preflight/post-install 실행 + cleanup task |
 | `validate.py` | rule validator 우선, Verify Agent fallback |
 | `report.py` | Jinja2 PDF/XLSX |
-| `ssh_client.py` | SSH 접속 관리 (SecretStr 지원, 접속 후 pw 즉시 폐기) |
-| `rule_validator.py` | `validation.rules` 기반 PASS/FAIL 판정 (토큰 0) |
-| `agent_gateway.py` | 에이전트 호출 판단 + compact input 구성 |
-| `sw_install.py` | q_sw_install — 설치 실행/검증/재시도 |
-| `sw_planner.py` | SW 요구사항 파싱 + 계획 JSON 생성 오케스트레이션 |
+| `ssh_client.py` (미구현) | SSH 접속 관리 (SecretStr 지원, 접속 후 pw 즉시 폐기) |
+| `rule_validator.py` (미구현) | `validation.rules` 기반 PASS/FAIL 판정 (토큰 0) |
+| `agent_gateway.py` (미구현) | 에이전트 호출 판단 + compact input 구성 |
+| `sw_install.py` (미구현) | q_sw_install — 설치 실행/검증/재시도 |
+| `sw_planner.py` (미구현) | SW 요구사항 파싱 + 계획 JSON 생성 오케스트레이션 |
 
 ## 핵심 Celery 설정
 

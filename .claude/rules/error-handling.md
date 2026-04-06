@@ -93,7 +93,7 @@ def run_phase(self, job_id: str, ...):
 | Agent 토큰 예산 초과 (`max_tokens` 도달) | 즉시 FAILED |
 | 대상 서버 치명적 오류 (freezing, kernel panic) | 즉시 FAILED |
 | 논리적 실패 (프로파일 파싱 오류, 스키마 불일치 등) | 즉시 FAILED |
-| 의존성 위반으로 인한 설치 실패 | 즉시 FAILED (재시도 없음, sw-install.md 참조) |
+| 의존성 위반으로 인한 설치 실패 | SW Planner Agent 에스컬레이션 → 복구 실패 시 FAILED (재시도 없음, sw-install.md 참조) |
 
 3회 재시도 후 모두 실패하면 `job.status = "failed"` 로 확정.
 
@@ -112,7 +112,7 @@ def run_phase(self, job_id: str, ...):
 
 에러 로그에 반드시 포함:
 - `error_type`: 위 분류 중 하나
-- `phase`: 어느 단계에서 발생했는지
+- `stage`: 파이프라인 단계 (`preflight` / `sw_install` / `post_install` / `validating` / `cleanup` / `reporting`). JobStatus 도메인 값 — Profile Phase(profiles.md)와 이름이 겹치는 항목(preflight, post_install)이 있으나 별개 개념임. `sw_install`은 JobStatus 단계이며 Phase 아님.
 - `script`: 실패한 스크립트 이름 (스크립트 실패 시)
 - `exit_code`: 스크립트 exit code (스크립트 실패 시)
 - `stderr`: 스크립트 stderr 출력 (스크립트 실패 시, 민감정보 마스킹 후)
@@ -150,7 +150,7 @@ task 이름별 파일 분리:
 
 JSONL 형식 (1줄 = 1 이벤트):
 ```json
-{"timestamp": "2026-04-03T10:00:00Z", "level": "error", "job_id": "...", "task": "preflight", "phase": "preflight", "error_type": "ssh_connection_error", "msg": "SSH connection refused", "retry_count": 2}
+{"timestamp": "2026-04-03T10:00:00Z", "level": "error", "job_id": "...", "task": "preflight", "stage": "preflight", "error_type": "ssh_connection_error", "msg": "SSH connection refused", "retry_count": 2}
 ```
 
 ### 민감정보 마스킹
