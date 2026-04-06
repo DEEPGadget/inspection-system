@@ -43,8 +43,11 @@ def run_phase(self, job_id: str, phase: str) -> dict:
 ## Job 상태 전이
 
 ```
-pending → preflight → sw_install (optional) → post_install → validating → cleanup → reporting → pass / fail
-                                                                                               ↘ error
+pending → preflight → sw_install* → rebooting* → post_install → validating → cleanup → reporting → pass
+                                                                                                  ↘ failed
+                                                                                                  ↘ rejected
+                                                                                                  ↘ report_failed
+* sw_install: sw_requirements 있을 때만 / rebooting: nvidia-driver 또는 GRUB 변경 시만
 ```
 
 ## pre_install 실행 방식

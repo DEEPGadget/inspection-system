@@ -5,7 +5,7 @@
 - **배포 전 적용**: 코드 배포 전 반드시 마이그레이션 먼저 완료
 - **서비스 중단 허용**: 마이그레이션 중 API 컨테이너 중지 가능
 - **staging 없음**: 로컬 Docker DB에서 검증 후 운영 직접 적용
-- **자동 롤백**: 마이그레이션 실패 시 PostgreSQL 트랜잭션이 자동으로 이전 상태로 복원
+- **자동 롤백**: DDL(컬럼 추가·삭제 등) 실패 시 PostgreSQL 트랜잭션이 자동 복원. **단, `ALTER TYPE`(ENUM 값 추가)은 트랜잭션 밖 실행이므로 자동 롤백 불가 — 실패 시 수동 처리 필요**
 
 ---
 
@@ -22,7 +22,8 @@ docker compose run --rm api alembic upgrade head
 docker compose up -d
 ```
 
-실패 시 PostgreSQL이 트랜잭션을 자동 롤백하므로 별도 처리 불필요.  
+DDL 실패 시 PostgreSQL이 트랜잭션을 자동 롤백.  
+ENUM `ALTER TYPE` 실패 시 자동 롤백 없음 — `IF NOT EXISTS` 멱등성 덕분에 재실행은 안전하지만, 이미 추가된 ENUM 값은 수동 삭제 필요(컬럼 재생성 방식).  
 실패 원인 파악 후 마이그레이션 파일을 수정해 재시도.
 
 ---
@@ -113,10 +114,11 @@ v2 리팩토링에서 필요한 스키마 변경을 하나의 마이그레이션
 
 ## 로컬 검증 절차
 
-운영 적용 전 로컬 Docker에서 반드시 확인:
+운영 적용 전 로컬 Docker에서 반드시 확인.  
+로컬 검증은 서비스가 **실행 중인 상태**에서 `exec`로 수행 (배포 절차의 `run --rm`과 다름).
 
 ```bash
-# 현재 상태에서 upgrade 적용
+# 현재 상태에서 upgrade 적용 (api 컨테이너 실행 중 가정)
 docker compose exec api alembic upgrade head
 
 # revision 확인

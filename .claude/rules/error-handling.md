@@ -49,7 +49,7 @@ pending
 | `pending` | 생성됨, 미시작 |
 | `preflight` | Preflight Runner 실행 중 |
 | `sw_install` | SW Install Runner 실행 중 |
-| `rebooting` | nvidia-driver 설치 후 reboot 대기 중 |
+| `rebooting` | SW Install 중 reboot 필요 시 (nvidia-driver 설치 또는 GRUB 파라미터 적용 후) |
 | `post_install` | Post-install Runner 실행 중 |
 | `validating` | Rule Validator / Verify Agent 실행 중 |
 | `cleanup` | Cleanup Runner 실행 중 |
@@ -125,15 +125,17 @@ def run_phase(self, job_id: str, ...):
 ### 저장 위치
 
 ```
-# 컨테이너 내부
-/app/logs/{job_id}/{task}.jsonl
+# NFS 경로 (호스트 및 컨테이너에서 동일하게 접근)
+/srv/inspection/logs/{job_id}/{task}.jsonl
 
 # docker-compose.yml 볼륨 마운트
-./logs:/app/logs
+/srv/inspection/logs:/app/logs
 
-# 호스트 경로
-~/workspace/projects/inspection-system/logs/{job_id}/
+# 컨테이너 내부 경로
+/app/logs/{job_id}/{task}.jsonl
 ```
+
+`/srv/inspection/logs` = README NFS 구성 "내부 전용 (민감 에러 로그)". 10.100.1.0/24 외부 접근 차단.
 
 task 이름별 파일 분리:
 
