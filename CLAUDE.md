@@ -42,12 +42,7 @@ Flower: `:5555` / PostgreSQL: `:5432` / WebSocket: `:8000/ws`
 
 ## Phase 체계
 
-- **preflight**: 드라이버/SW 없이 실행 가능 (HW 인식, OS 상태)
-- **sw_install**: 유저 요구사항 기반 SW 설치
-- **post_install**: 드라이버/SW 의존 검수 + Stress
-- **collect**: 로그 수집
-
-Phase 1 (H/W 수동 검수 8항목)은 GUI 직접 입력, 시스템 자동화 범위 밖.
+용어 정의 → `context/glossary.md` (Phase, Phase 1, JobStatus, preflight, post_install, collect, sw_install 구분 포함)
 
 ## Directory
 
