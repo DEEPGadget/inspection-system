@@ -17,12 +17,14 @@ from pathlib import Path
 
 import asyncssh
 import structlog
+from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from config.settings import settings
 from workers.app import app
 from workers.notify import publish_job_status
+from workers.ssh_client import secret_input, wrap_password
 
 log = structlog.get_logger(__name__)
 
@@ -133,14 +135,14 @@ def _build_connect_kwargs(target_host: str, target_user: str) -> dict:
 async def _apt_install(
     conn: asyncssh.SSHClientConnection,
     packages: list[str],
-    sudo_password: str,
+    secret: SecretStr,
     timeout: int = 300,
 ) -> tuple[bool, str]:
     pkg_str = " ".join(packages)
     cmd = f"DEBIAN_FRONTEND=noninteractive sudo -S apt-get install -y {pkg_str} 2>&1"
     result = await conn.run(
         cmd,
-        input=f"{sudo_password}\n",  # TODO(C-1): ssh_client.py SecretStr.get_secret_value()로 교체
+        input=secret_input(secret),
         check=False,
         timeout=timeout,
     )
@@ -277,6 +279,7 @@ async def _async_preflight(
     product_profile: str,
     sudo_password: str | None,
 ) -> None:
+    secret = wrap_password(sudo_password)
     engine, SessionLocal = _make_session()
     try:
         profile_file = _profile_path(product_profile)
@@ -301,19 +304,19 @@ async def _async_preflight(
 
             # baseline 패키지 설치
             baseline = profile.get("pre_install", {}).get("baseline", [])
-            if baseline and sudo_password:
+            if baseline and secret:
                 log.info("preflight.baseline_install", packages=baseline)
-                ok, output = await _apt_install(conn, baseline, sudo_password)
+                ok, output = await _apt_install(conn, baseline, secret)
                 if not ok:
                     log.warning("preflight.baseline_failed", output=output[:200])
-            elif baseline and not sudo_password:
+            elif baseline and not secret:
                 log.warning("preflight.baseline_skip", reason="sudo_password not provided")
 
             phase_cfg = profile.get("phases", {}).get("preflight", {})
             scripts: list[str] = phase_cfg.get("scripts", [])
             phase_env: dict[str, str] = dict(phase_cfg.get("env", {}))
-            if sudo_password:
-                phase_env["SUDO_PASSWORD"] = sudo_password  # TODO(C-1): SecretStr 교체 시 정리
+            if secret:
+                phase_env["SUDO_PASSWORD"] = secret.get_secret_value()
 
             success = await _run_phase_scripts(
                 conn,
@@ -410,6 +413,7 @@ async def _async_post_install(
     product_profile: str,
     sudo_password: str | None,
 ) -> None:
+    secret = wrap_password(sudo_password)
     engine, SessionLocal = _make_session()
     try:
         profile_file = _profile_path(product_profile)
@@ -431,19 +435,19 @@ async def _async_post_install(
 
             # stress_tools 설치
             stress_tools = profile.get("pre_install", {}).get("stress_tools", [])
-            if stress_tools and sudo_password:
+            if stress_tools and secret:
                 log.info("post_install.stress_tools_install", packages=stress_tools)
-                ok, output = await _apt_install(conn, stress_tools, sudo_password, timeout=120)
+                ok, output = await _apt_install(conn, stress_tools, secret, timeout=120)
                 if not ok:
                     log.warning("post_install.stress_tools_failed", output=output[:200])
-            elif stress_tools and not sudo_password:
+            elif stress_tools and not secret:
                 log.warning("post_install.stress_tools_skip", reason="sudo_password not provided")
 
             phase_cfg = profile.get("phases", {}).get("post_install", {})
             scripts: list[str] = phase_cfg.get("scripts", [])
             phase_env: dict[str, str] = dict(phase_cfg.get("env", {}))
-            if sudo_password:
-                phase_env["SUDO_PASSWORD"] = sudo_password  # TODO(C-1): SecretStr 교체 시 정리
+            if secret:
+                phase_env["SUDO_PASSWORD"] = secret.get_secret_value()
 
             success = await _run_phase_scripts(
                 conn,
@@ -532,6 +536,7 @@ async def _async_cleanup(
     product_profile: str,
     sudo_password: str | None,
 ) -> None:
+    secret = wrap_password(sudo_password)
     engine, SessionLocal = _make_session()
     try:
         profile_file = _profile_path(product_profile)
@@ -552,12 +557,12 @@ async def _async_cleanup(
             async with asyncssh.connect(**connect_kwargs) as conn:
                 # 패키지 제거
                 remove_packages: list[str] = cleanup_cfg.get("remove_packages", [])
-                if remove_packages and sudo_password:
+                if remove_packages and secret:
                     pkg_str = " ".join(remove_packages)
                     cmd = f"sudo -S apt-get remove -y {pkg_str} 2>&1"
                     result = await conn.run(
                         cmd,
-                        input=f"{sudo_password}\n",  # TODO(C-1): SecretStr 교체 시 정리
+                        input=secret_input(secret),
                         check=False,
                         timeout=120,
                     )
@@ -567,7 +572,7 @@ async def _async_cleanup(
                             packages=remove_packages,
                             stderr=(result.stderr or "")[:200],
                         )
-                elif remove_packages and not sudo_password:
+                elif remove_packages and not secret:
                     log.warning("cleanup.pkg_skip", reason="sudo_password not provided")
 
                 # 디렉토리 제거
@@ -577,7 +582,7 @@ async def _async_cleanup(
                         continue
                     result = await conn.run(
                         f"sudo -S rm -rf {dir_path}",
-                        input=f"{sudo_password}\n" if sudo_password else "",
+                        input=secret_input(secret),
                         check=False,
                         timeout=30,
                     )
