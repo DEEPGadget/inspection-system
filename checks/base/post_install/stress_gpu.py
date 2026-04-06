@@ -10,6 +10,7 @@ FAIL: peak_temp > 87°C | HW throttle 발생 | ECC uncorrected 증가
 WARN: SW/PWR throttle | ECC corrected 증가 | util<80% | 도구 없음
 출력: {"check":"stress_gpu","status":"pass|fail|warn","detail":"..."}
 """
+
 import json
 import os
 import subprocess
@@ -38,7 +39,11 @@ def run_rc(cmd, timeout=10):
 
 
 def emit(status, details):
-    print(json.dumps({"check": CHECK, "status": status, "detail": "|".join(details)}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"check": CHECK, "status": status, "detail": "|".join(details)}, ensure_ascii=False
+        )
+    )
     sys.exit(0)
 
 
@@ -54,7 +59,7 @@ def main():
 
     # GPU 수량
     gpu_names = run("nvidia-smi --query-gpu=name --format=csv,noheader", timeout=10)
-    gpu_count = len([l for l in gpu_names.splitlines() if l.strip()]) if gpu_names else 0
+    gpu_count = len([line for line in gpu_names.splitlines() if line.strip()]) if gpu_names else 0
     if gpu_count == 0:
         emit("fail", ["no GPUs detected"])
     details.append(f"gpu_count={gpu_count}")
@@ -91,7 +96,9 @@ def main():
     burn_bin = None
     if run("command -v gpu_burn"):
         burn_bin = "gpu_burn"
-    elif os.path.isfile(f"{GPU_BURN_DIR}/gpu_burn") and os.access(f"{GPU_BURN_DIR}/gpu_burn", os.X_OK):
+    elif os.path.isfile(f"{GPU_BURN_DIR}/gpu_burn") and os.access(
+        f"{GPU_BURN_DIR}/gpu_burn", os.X_OK
+    ):
         burn_bin = f"{GPU_BURN_DIR}/gpu_burn"
 
     if burn_bin:
@@ -99,7 +106,8 @@ def main():
         try:
             stress_proc = subprocess.Popen(
                 [burn_bin, str(duration)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
         except Exception as e:
             print(f"gpu_burn launch failed: {e}", file=sys.stderr)
@@ -107,21 +115,31 @@ def main():
             tool = "none"
 
     # 2) nvcc → 소스 빌드
-    if tool == "none" and run("command -v nvcc") and run("command -v git") and run("command -v make"):
+    if (
+        tool == "none"
+        and run("command -v nvcc")
+        and run("command -v git")
+        and run("command -v make")
+    ):
         print("nvcc found — building gpu_burn from source", file=sys.stderr)
         subprocess.run(f"rm -rf {GPU_BURN_DIR}", shell=True)
-        r = subprocess.run(
+        subprocess.run(
             f"git clone --depth=1 https://github.com/wilicc/gpu-burn.git {GPU_BURN_DIR} "
             f"&& make -C {GPU_BURN_DIR}",
-            shell=True, capture_output=True, timeout=300,
+            shell=True,
+            capture_output=True,
+            timeout=300,
         )
-        built = os.path.isfile(f"{GPU_BURN_DIR}/gpu_burn") and os.access(f"{GPU_BURN_DIR}/gpu_burn", os.X_OK)
+        built = os.path.isfile(f"{GPU_BURN_DIR}/gpu_burn") and os.access(
+            f"{GPU_BURN_DIR}/gpu_burn", os.X_OK
+        )
         if built:
             tool = "gpu_burn"
             try:
                 stress_proc = subprocess.Popen(
                     [f"{GPU_BURN_DIR}/gpu_burn", str(duration)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
             except Exception:
                 tool = "none"
@@ -133,7 +151,8 @@ def main():
         try:
             stress_proc = subprocess.Popen(
                 ["dcgmi", "diag", "-r", "2"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
         except Exception:
             tool = "none"
@@ -142,7 +161,7 @@ def main():
     # 4) PyTorch
     if tool == "none":
         torch_ok, rc = run_rc(
-            "python3 -c \"import torch; assert torch.cuda.is_available()\"", timeout=15
+            'python3 -c "import torch; assert torch.cuda.is_available()"', timeout=15
         )
         if rc == 0:
             tool = "pytorch"
@@ -157,7 +176,8 @@ def main():
             try:
                 stress_proc = subprocess.Popen(
                     ["python3", "-c", py_script],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
             except Exception:
                 tool = "none"
@@ -198,7 +218,13 @@ def main():
             parts = [p.strip() for p in line.split(",")]
             if len(parts) < 5:
                 continue
-            _, temp_s, power_s, util_s, throttle_s = parts[0], parts[1], parts[2], parts[3], parts[4]
+            _, temp_s, power_s, util_s, throttle_s = (
+                parts[0],
+                parts[1],
+                parts[2],
+                parts[3],
+                parts[4],
+            )
 
             try:
                 temp = int(temp_s)

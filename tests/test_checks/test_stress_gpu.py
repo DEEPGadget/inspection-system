@@ -1,5 +1,5 @@
 """
-stress_gpu.sh 유닛 테스트.
+stress_gpu.py 유닛 테스트.
 nvidia-smi / gpu_burn / dcgmi 없는 CI 환경을 가정.
 스크립트를 직접 실행하지 않고, 출력 JSON 규격과 로직 분기만 검증.
 """
@@ -11,17 +11,17 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).parent.parent.parent / "checks" / "base" / "phase4_stress" / "stress_gpu.sh"
+SCRIPT = Path(__file__).parent.parent.parent / "checks" / "base" / "post_install" / "stress_gpu.py"
 
 
 def _run(env_override: dict | None = None, timeout: int = 10) -> dict:
-    """stress_gpu.sh를 최소 환경에서 실행하고 JSON 출력을 파싱한다."""
+    """stress_gpu.py를 최소 환경에서 실행하고 JSON 출력을 파싱한다."""
     env = {**os.environ, "GPU_BURNIN_DURATION": "1"}
     if env_override:
         env.update(env_override)
 
     result = subprocess.run(
-        ["bash", str(SCRIPT)],
+        ["python3", str(SCRIPT)],
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -47,7 +47,7 @@ def test_no_nvidia_smi_returns_fail():
     # PATH를 빈 디렉토리로 제한하여 nvidia-smi 숨김
     env = {**os.environ, "PATH": "/bin:/usr/bin", "GPU_BURNIN_DURATION": "1"}
     result = subprocess.run(
-        ["bash", str(SCRIPT)],
+        ["python3", str(SCRIPT)],
         capture_output=True,
         text=True,
         timeout=10,
@@ -90,24 +90,6 @@ def test_detail_contains_required_fields():
     detail = data["detail"]
     for field in ("peak_temp_c", "peak_power_w", "avg_util_pct", "tool", "duration_s"):
         assert field in detail, f"missing field: {field}"
-
-
-# ---------------------------------------------------------------------------
-# 스크립트 문법 (shellcheck — 설치 시)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(
-    subprocess.run(["which", "shellcheck"], capture_output=True).returncode != 0,
-    reason="shellcheck 미설치",
-)
-def test_shellcheck_stress_gpu():
-    result = subprocess.run(
-        ["shellcheck", "-S", "warning", str(SCRIPT)],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, f"shellcheck 실패:\n{result.stdout}"
 
 
 # ---------------------------------------------------------------------------

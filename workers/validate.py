@@ -1,5 +1,5 @@
 """
-q_validate worker — NFS의 검수 결과를 Claude API로 판독, DB 업데이트 후 report 트리거.
+q_validate worker — NFS의 검수 결과를 Claude API로 판독, DB 업데이트 후 cleanup 트리거.
 concurrency=2 (celeryconfig) — Claude API rate limit 대응.
 """
 
@@ -27,6 +27,7 @@ def _make_session() -> tuple:
     engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
     session_local = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     return engine, session_local
+
 
 _PROMPT_PATH = Path(__file__).parent.parent / "config" / "prompts" / "validation_gpu_server.txt"
 
@@ -173,13 +174,14 @@ async def _update_job_status(
 # ---------------------------------------------------------------------------
 
 
-async def _async_validate(job_id: str) -> None:
+async def _async_validate(job_id: str, **kwargs) -> None:
     engine, SessionLocal = _make_session()
     try:
         # ── 1. DB에서 Job + CheckResult 로드 ──────────────────
         async with SessionLocal() as session:
             job, check_results = await _load_job_and_results(session, job_id)
             target_host = job.target_host
+            target_user = job.target_user
             product_profile = job.product_profile
 
         if not check_results:
@@ -267,12 +269,16 @@ async def _async_validate(job_id: str) -> None:
             )
         await publish_job_status(job_id, new_status)
 
-        # ── 8. pass/fail 모두 report 트리거 ──────────────────
+        # ── 8. pass/fail 모두 cleanup → report 트리거 ────────
         if overall in ("pass", "fail"):
-            from workers.report import generate_report
+            from workers.inspect import run_cleanup
 
-            generate_report.apply_async(args=[job_id], queue="q_report")
-            log.info("validate.report_triggered", job_id=job_id, overall=overall)
+            run_cleanup.apply_async(
+                args=[job_id, target_host, target_user, product_profile],
+                kwargs={"sudo_password": kwargs.get("sudo_password")},
+                queue="q_inspect",
+            )
+            log.info("validate.cleanup_triggered", job_id=job_id, overall=overall)
     finally:
         await engine.dispose()
 
@@ -300,16 +306,33 @@ async def _mark_error(job_id: str, message: str) -> None:
     default_retry_delay=30,
     name="workers.validate.validate_results",
 )
-def validate_results(self, job_id: str) -> dict:
+def validate_results(
+    self,
+    job_id: str,
+    sudo_password: str | None = None,
+    target_host: str | None = None,
+    target_user: str | None = None,
+    product_profile: str | None = None,
+) -> dict:
     """
     Claude API 판독 태스크.
 
     Args:
         job_id: Job UUID (str)
+        sudo_password: cleanup 단계 SSH sudo용 (임시, C-1 ssh_client.py 구현 시 정리)
+        target_host: cleanup 디스패치용 (DB에서 로드 가능하나 명시적 전달)
+        target_user: cleanup 디스패치용
+        product_profile: cleanup 디스패치용
     """
+    kwargs = {
+        "sudo_password": sudo_password,
+        "target_host": target_host,
+        "target_user": target_user,
+        "product_profile": product_profile,
+    }
     log.info("validate.start", job_id=job_id)
     try:
-        asyncio.run(_async_validate(job_id))
+        asyncio.run(_async_validate(job_id, **kwargs))
         return {"job_id": job_id, "result": "ok"}
     except anthropic.AuthenticationError as exc:
         # API 키 오류 — 재시도 무의미

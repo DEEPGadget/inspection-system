@@ -12,6 +12,7 @@ FAIL: 2-GPU busbw < NCCL_ALLREDUCE_MIN_BW_2GPU
 WARN: GPU < 2 | nccl-tests 없음 | pytorch NCCL 없음
 출력: {"check":"nccl_bandwidth","status":"pass|fail|warn","detail":"..."}
 """
+
 import json
 import os
 import subprocess
@@ -24,7 +25,11 @@ NCCL_TESTS_DIR = "/opt/nccl-tests"
 def run(cmd, timeout=10, env=None):
     try:
         r = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout,
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
             env=env,
         )
         return r.stdout.strip(), r.returncode
@@ -35,7 +40,11 @@ def run(cmd, timeout=10, env=None):
 
 
 def emit(status, details):
-    print(json.dumps({"check": CHECK, "status": status, "detail": "|".join(details)}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"check": CHECK, "status": status, "detail": "|".join(details)}, ensure_ascii=False
+        )
+    )
     sys.exit(0)
 
 
@@ -54,7 +63,7 @@ def main():
 
     # GPU 수량
     gpu_out, _ = run("nvidia-smi --query-gpu=name --format=csv,noheader", timeout=10)
-    gpu_count = len([l for l in gpu_out.splitlines() if l.strip()]) if gpu_out else 0
+    gpu_count = len([line for line in gpu_out.splitlines() if line.strip()]) if gpu_out else 0
     details.append(f"gpu_count={gpu_count}")
 
     if gpu_count < 2:
@@ -100,7 +109,7 @@ def main():
     pytorch_ok = False
     if not allreduce_bin:
         _, rc = run(
-            "python3 -c \"import torch; assert torch.cuda.is_available(); import torch.distributed\"",
+            'python3 -c "import torch; assert torch.cuda.is_available(); import torch.distributed"',
             timeout=15,
         )
         pytorch_ok = rc == 0
@@ -136,11 +145,11 @@ def main():
                 return None
         else:
             # PyTorch NCCL 백업
-            py_script = f"""
+            py_script = """
 import torch, torch.distributed as dist, time, os
 dist.init_process_group("nccl")
 rank = dist.get_rank()
-dev = torch.device(f"cuda:{{rank}}")
+dev = torch.device(f"cuda:{rank}")
 n = dist.get_world_size()
 buf = torch.ones(1024*1024*64, dtype=torch.float32, device=dev)
 for _ in range(3):
@@ -154,7 +163,7 @@ elapsed = time.perf_counter() - t0
 if rank == 0:
     size_gb = buf.nelement() * buf.element_size() / 1e9
     bus_bw = 2 * (n - 1) / n * size_gb * 10 / elapsed
-    print(f"{{bus_bw:.2f}}")
+    print(f"{bus_bw:.2f}")
 dist.destroy_process_group()
 """
             out, rc = run(

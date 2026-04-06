@@ -32,6 +32,7 @@ def _make_session() -> tuple:
     session_local = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     return engine, session_local
 
+
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
 

@@ -9,6 +9,7 @@ FAIL: peak_temp > 100°C
 WARN: SW throttle(주파수 강하) | 도구 없음 | util < 80%
 출력: {"check":"stress_cpu","status":"pass|fail|warn","detail":"..."}
 """
+
 import json
 import os
 import subprocess
@@ -28,7 +29,11 @@ def run(cmd, timeout=10):
 
 
 def emit(status, details):
-    print(json.dumps({"check": CHECK, "status": status, "detail": "|".join(details)}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"check": CHECK, "status": status, "detail": "|".join(details)}, ensure_ascii=False
+        )
+    )
     sys.exit(0)
 
 
@@ -57,9 +62,17 @@ def main():
         tool = "stress-ng"
         try:
             stress_proc = subprocess.Popen(
-                ["stress-ng", "--cpu", str(nproc), "--cpu-method", "matrixprod",
-                 "--timeout", f"{duration}s"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                [
+                    "stress-ng",
+                    "--cpu",
+                    str(nproc),
+                    "--cpu-method",
+                    "matrixprod",
+                    "--timeout",
+                    f"{duration}s",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
         except Exception:
             tool = "none"
@@ -70,7 +83,8 @@ def main():
         try:
             stress_proc = subprocess.Popen(
                 ["stress", "--cpu", str(nproc), "--timeout", str(duration)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
         except Exception:
             tool = "none"
@@ -94,6 +108,7 @@ def main():
     # 온도 파일 목록 결정
     temp_files = []
     from pathlib import Path
+
     thermal_base = Path("/sys/class/thermal")
     if thermal_base.exists():
         for zone in sorted(thermal_base.glob("thermal_zone*")):
@@ -118,7 +133,9 @@ def main():
     # 최대 주파수 (한 번만 읽기)
     max_freq_khz = 0
     try:
-        max_freq_khz = int(open("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq").read().strip())
+        max_freq_khz = int(
+            open("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq").read().strip()
+        )
     except Exception:
         pass
 
@@ -152,7 +169,9 @@ def main():
 
         # 현재 주파수 (cpu0)
         try:
-            freq_khz = int(open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq").read().strip())
+            freq_khz = int(
+                open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq").read().strip()
+            )
             freq_mhz = freq_khz // 1000
             if freq_mhz < min_freq_mhz:
                 min_freq_mhz = freq_mhz

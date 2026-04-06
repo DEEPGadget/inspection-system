@@ -182,7 +182,7 @@ async def test_async_generate_report_pass_flow(tmp_path):
         patch("workers.report.publish_job_status", new_callable=AsyncMock),
         patch("workers.report._render_pdf") as mock_pdf,
         patch("workers.report._render_xlsx") as mock_xlsx,
-        patch("workers.report._SessionLocal"),
+        patch("workers.report._make_session", return_value=(AsyncMock(), MagicMock())),
     ):
         mock_settings.nfs_base_path = str(tmp_path)
         mock_load.return_value = (fake_job, [])
@@ -216,7 +216,7 @@ async def test_async_generate_report_missing_verdict(tmp_path):
     with (
         patch("workers.report.settings") as mock_settings,
         patch("workers.report._load_job_and_results", new_callable=AsyncMock) as mock_load,
-        patch("workers.report._SessionLocal"),
+        patch("workers.report._make_session", return_value=(AsyncMock(), MagicMock())),
     ):
         mock_settings.nfs_base_path = str(tmp_path)
         mock_load.return_value = (fake_job, [])

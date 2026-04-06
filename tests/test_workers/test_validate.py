@@ -136,35 +136,23 @@ MOCK_CHECK_RESULTS = [
 
 
 @pytest.mark.asyncio
-async def test_async_validate_pass_triggers_report(tmp_path, monkeypatch):
-    """overall=pass 시 generate_report.apply_async가 호출되는지 확인."""
+async def test_async_validate_pass_triggers_cleanup(tmp_path, monkeypatch):
+    """overall=pass 시 run_cleanup.apply_async가 호출되는지 확인."""
     job_id = str(uuid.uuid4())
     monkeypatch.setattr("workers.validate.settings.nfs_base_path", str(tmp_path))
     monkeypatch.setattr("workers.validate.settings.anthropic_api_key", "test-key")
 
-    # DB mock
     mock_job = MagicMock(
         target_host="10.0.0.1",
+        target_user="root",
         product_profile="gpu_server",
     )
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-    mock_session.execute = AsyncMock(
-        return_value=MagicMock(
-            scalar_one_or_none=MagicMock(return_value=mock_job),
-            scalars=MagicMock(
-                return_value=MagicMock(all=MagicMock(return_value=MOCK_CHECK_RESULTS))
-            ),
-        )
-    )
-    mock_session.commit = AsyncMock()
 
-    mock_report = MagicMock()
-    mock_report.apply_async = MagicMock()
+    mock_cleanup = MagicMock()
+    mock_cleanup.apply_async = MagicMock()
 
     with (
-        patch("workers.validate._SessionLocal", MagicMock(return_value=mock_session)),
+        patch("workers.validate._make_session", return_value=(AsyncMock(), MagicMock())),
         patch(
             "workers.validate._load_job_and_results",
             AsyncMock(return_value=(mock_job, MOCK_CHECK_RESULTS)),
@@ -172,7 +160,7 @@ async def test_async_validate_pass_triggers_report(tmp_path, monkeypatch):
         patch("workers.validate._update_check_verdicts", AsyncMock()),
         patch("workers.validate._update_job_status", AsyncMock()),
         patch("workers.validate._call_claude", AsyncMock(return_value=VALID_RESPONSE)),
-        patch.dict("sys.modules", {"workers.report": MagicMock(generate_report=mock_report)}),
+        patch.dict("sys.modules", {"workers.inspect": MagicMock(run_cleanup=mock_cleanup)}),
     ):
         from workers.validate import _async_validate
 
@@ -183,20 +171,26 @@ async def test_async_validate_pass_triggers_report(tmp_path, monkeypatch):
     assert verdict_file.exists()
     data = json.loads(verdict_file.read_text())
     assert data["overall"] == "pass"
+    mock_cleanup.apply_async.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_async_validate_fail_no_report(tmp_path, monkeypatch):
-    """overall=fail 시 report가 트리거되지 않는지 확인."""
+async def test_async_validate_fail_triggers_cleanup(tmp_path, monkeypatch):
+    """overall=fail 시 run_cleanup.apply_async가 호출되는지 확인."""
     job_id = str(uuid.uuid4())
     monkeypatch.setattr("workers.validate.settings.nfs_base_path", str(tmp_path))
     monkeypatch.setattr("workers.validate.settings.anthropic_api_key", "test-key")
 
-    mock_job = MagicMock(target_host="10.0.0.1", product_profile="gpu_server")
-    mock_report = MagicMock()
-    mock_report.apply_async = MagicMock()
+    mock_job = MagicMock(
+        target_host="10.0.0.1",
+        target_user="root",
+        product_profile="gpu_server",
+    )
+    mock_cleanup = MagicMock()
+    mock_cleanup.apply_async = MagicMock()
 
     with (
+        patch("workers.validate._make_session", return_value=(AsyncMock(), MagicMock())),
         patch(
             "workers.validate._load_job_and_results",
             AsyncMock(return_value=(mock_job, MOCK_CHECK_RESULTS)),
@@ -204,13 +198,13 @@ async def test_async_validate_fail_no_report(tmp_path, monkeypatch):
         patch("workers.validate._update_check_verdicts", AsyncMock()),
         patch("workers.validate._update_job_status", AsyncMock()),
         patch("workers.validate._call_claude", AsyncMock(return_value=FAIL_RESPONSE)),
-        patch.dict("sys.modules", {"workers.report": MagicMock(generate_report=mock_report)}),
+        patch.dict("sys.modules", {"workers.inspect": MagicMock(run_cleanup=mock_cleanup)}),
     ):
         from workers.validate import _async_validate
 
         await _async_validate(job_id)
 
-    mock_report.apply_async.assert_not_called()
+    mock_cleanup.apply_async.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,5 @@
 """
-nccl_bandwidth.sh 유닛 테스트.
+nccl_bandwidth.py 유닛 테스트.
 GPU / nccl-tests 없는 CI 환경을 가정.
 JSON 출력 규격, 조기 종료 경로(GPU 없음, 단일 GPU), mock 파싱 검증.
 """
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 SCRIPT = (
-    Path(__file__).parent.parent.parent / "checks" / "base" / "phase5_nccl" / "nccl_bandwidth.sh"
+    Path(__file__).parent.parent.parent / "checks" / "base" / "post_install" / "nccl_bandwidth.py"
 )
 
 _HAS_NVIDIA = subprocess.run(["which", "nvidia-smi"], capture_output=True).returncode == 0
@@ -23,7 +23,7 @@ def _run(env_override: dict | None = None, timeout: int = 15) -> dict:
     if env_override:
         env.update(env_override)
     result = subprocess.run(
-        ["bash", str(SCRIPT)],
+        ["python3", str(SCRIPT)],
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -44,7 +44,7 @@ def test_no_nvidia_smi_returns_fail():
     """nvidia-smi 없으면 즉시 fail 반환."""
     env = {**os.environ, "PATH": "/bin:/usr/bin"}
     result = subprocess.run(
-        ["bash", str(SCRIPT)],
+        ["python3", str(SCRIPT)],
         capture_output=True,
         text=True,
         timeout=10,
@@ -80,21 +80,6 @@ def test_detail_contains_gpu_count():
 
 
 # ---------------------------------------------------------------------------
-# shellcheck
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(
-    subprocess.run(["which", "shellcheck"], capture_output=True).returncode != 0,
-    reason="shellcheck 미설치",
-)
-def test_shellcheck_nccl():
-    result = subprocess.run(
-        ["shellcheck", "-S", "warning", str(SCRIPT)],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, f"shellcheck 실패:\n{result.stdout}"
 
 
 # ---------------------------------------------------------------------------
