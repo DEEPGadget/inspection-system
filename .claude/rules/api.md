@@ -39,16 +39,3 @@ class JobCreate(BaseModel):
 - `str | None` 형식 사용 (`Optional` 금지)
 - `SecretStr`로 password 자동 마스킹
 
-## Python 코드 규칙
-
-- ruff lint/format (line-length=100)
-- type hint 필수
-- API 레이어: async 함수 우선
-- import 순서: stdlib → 3rd party → local
-- 구체 예외 catch, bare `except` 금지
-- f-string 사용 (`.format()` 금지)
-
-## 의존성 관리
-
-- 새 패키지: `pyproject.toml` dependencies 반드시 반영
-- venv에만 설치하고 `pyproject.toml` 미반영 금지

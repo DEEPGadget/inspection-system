@@ -58,6 +58,9 @@ pending
 | `failed` | 시스템/스크립트 오류 또는 Rule Validator FAIL 판정 |
 | `rejected` | Verify Agent 불합격 판정 (경계값 검토 후 판단) |
 | `report_failed` | 리포트 생성 실패 (검수 결과 자체는 유효) |
+| ~~`inspecting`~~ | v1 deprecated — DB 값 유지, 코드에서 미사용 |
+| ~~`fail`~~ | v1 deprecated — DB 값 유지, 코드에서 미사용 (`failed`와 구분) |
+| ~~`error`~~ | v1 deprecated — DB 값 유지, 코드에서 미사용 |
 
 `failed`와 `rejected`는 반드시 구분. `rejected`는 "에이전트가 검토해서 내린 불합격"임을 리포트에 명시.
 
