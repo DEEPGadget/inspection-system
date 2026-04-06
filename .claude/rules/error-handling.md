@@ -21,7 +21,7 @@ Preflight → SW Install → Post-install → Rule Validate → Cleanup → Repo
 
 - SW Install 실패 시 Post-install을 **반드시 건너뜀** (SW 없는 상태에서 본검수 불가)
 - Cleanup 실패는 `on_failure: "warn"` 처리 (프로파일 cleanup 정책 따름, job 상태에 영향 없음)
-- Report 실패는 job 상태를 `report_failed`로 마킹, 다른 상태는 그대로 유지
+- Report 실패는 `job.status = "report_failed"` 로 확정. `check_results` 개별 판정·로그는 그대로 유지 (검수 결과 자체는 유효)
 
 ---
 

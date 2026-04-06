@@ -124,6 +124,7 @@ pending → preflight → sw_install* → rebooting* → post_install → valida
 | `GET /api/jobs/` | 전체 job 목록 |
 | `GET /api/jobs/{job_id}/` | job 상세 (check_results 포함) |
 | `DELETE /api/jobs/{job_id}/` | job 삭제 |
+| `GET /api/reports/{job_id}/` | 리포트 메타 조회 |
 | `GET /api/reports/{job_id}/pdf` | PDF 다운로드 |
 | `GET /api/reports/{job_id}/xlsx` | XLSX 다운로드 |
 | `WS /ws/jobs/{job_id}` | 실시간 상태 구독 |
