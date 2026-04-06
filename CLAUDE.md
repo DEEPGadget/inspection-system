@@ -3,6 +3,8 @@
 멀티워커 기반 DeepGadget 서버(dg5W/dg5R/dg5W-TT 외 단종 제품) SW 설치 및 출고 전 검수 자동화 시스템.
 FastAPI + Celery + Redis + PostgreSQL + NFS.
 
+> `.claude/rules/` 12개 파일 전체가 system-reminder로 자동 로드됨. 아래 "→ rules/X" 표기는 위치 안내용이며 별도 파일 읽기 불필요.
+
 ## 핵심 원칙
 **"LLM은 판단에만, 실행은 코드가"**
 - 정상 플로우: 에이전트 미호출, 토큰 0

@@ -102,7 +102,7 @@ v2 리팩토링에서 필요한 스키마 변경을 하나의 마이그레이션
 1. `job_status` ENUM 확장
    - 추가: `preflight`, `sw_install`, `rebooting`, `post_install`, `cleanup`, `failed`, `rejected`, `report_failed`
    - 기존 유지: `pending`, `validating`, `reporting`, `pass`
-   - 기존 deprecated: `inspecting`, `error` (값은 유지, 코드에서 미사용)
+   - 기존 deprecated: `inspecting`, `fail`, `error` (값은 유지, 코드에서 미사용)
 
 2. `jobs` 테이블 컬럼 추가
    - `sw_requirements TEXT` — SW 요구사항 원문 (nullable)
