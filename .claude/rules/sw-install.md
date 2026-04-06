@@ -370,7 +370,7 @@ sudo mount -a
 - 설치 실패 시: 해당 항목 실패 마킹 + 로그 파일 출력 (`/srv/inspection/results/{job_id}/sw_install.log`)
 - 의존성 위반으로 인한 후속 항목은 `skipped_due_to_dependency` 로 마킹
 - 전체 job은 실패 항목이 있어도 계속 진행 (후속 단계에서 영향 범위 판단)
-- Agent 개입 후에도 복구 실패 시 → `sw_install_failed` 상태로 job 마킹, post_install 진행
+- Agent 개입 후에도 복구 실패 시 → `failed` 상태로 job 마킹, post_install 건너뜀 (error-handling.md SW Install 실패 전파 규칙 따름)
 
 ---
 

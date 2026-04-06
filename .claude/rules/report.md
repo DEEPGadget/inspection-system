@@ -126,9 +126,8 @@ SW Planner Agent가 적용한 시스템 설정 항목 표시:
 리포트 본문에 로그 직접 삽입 금지. 위치 안내만 표시.
 
 ```
-상세 로그: /srv/inspection/results/{job_id}/
-  ├── inspect_raw/     스크립트별 JSON 결과
-  └── logs/            JSONL 이벤트 로그 (preflight, sw_install, post_install, validate, report)
+스크립트 결과: /srv/inspection/results/{job_id}/inspect_raw/  (스크립트별 JSON)
+태스크 로그:   /srv/inspection/logs/{job_id}/                  (JSONL 이벤트 로그, 내부 전용)
 ```
 
 ---

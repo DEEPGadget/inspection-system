@@ -32,10 +32,15 @@ class JobCreate(BaseModel):
     target_host: str
     target_user: str
     product_profile: str
-    sudo_password: SecretStr          # 자동 마스킹
-    sw_requirements: str | None = None  # 자유 형식 MD (있으면 SW Install 단계 실행)
+    sudo_password: SecretStr               # 자동 마스킹
+    sw_requirements: str | None = None     # 자유 형식 MD (있으면 SW Install 단계 실행)
+    expected_specs: dict | None = None     # 기대스펙 (e.g. {"expected_gpu_count": 8})
+                                           # profiles.md validation.rules의 fail_if_not_equal 비교 대상
+    hw_manual_checks: dict | None = None   # Phase 1 수동 검수 8항목 GUI 입력값
 ```
 
 - `str | None` 형식 사용 (`Optional` 금지)
 - `SecretStr`로 password 자동 마스킹
+- `expected_specs`: validation.rules에서 `"fail_if_not_equal": "expected_gpu_count"` 등 동적 기대값의 출처
+- `hw_manual_checks`: 리포트 Section 2 (H/W 수동 검수 결과) 데이터 출처, DB `jobs.hw_manual_checks` JSON 컬럼
 

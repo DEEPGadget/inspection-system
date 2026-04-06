@@ -72,7 +72,7 @@ pending → preflight → sw_install* → rebooting* → post_install → valida
                                                                                                   ↘ failed
                                                                                                   ↘ rejected      (Verify Agent 불합격)
                                                                                                   ↘ report_failed (리포트 생성 실패)
-* sw_install: SW 요구사항 있을 때만 / rebooting: nvidia-driver 설치 시만
+* sw_install: SW 요구사항 있을 때만 / rebooting: nvidia-driver 설치 또는 GRUB 파라미터 적용 시만
 ```
 
 | 상태 | 의미 |
@@ -80,7 +80,7 @@ pending → preflight → sw_install* → rebooting* → post_install → valida
 | `pending` | 생성됨, 미시작 |
 | `preflight` | Preflight Runner 실행 중 |
 | `sw_install` | SW Install Runner 실행 중 |
-| `rebooting` | nvidia-driver 설치 후 reboot 대기 중 |
+| `rebooting` | SW Install 중 reboot 필요 시 (nvidia-driver 설치 또는 GRUB 파라미터 적용 후) |
 | `post_install` | Post-install Runner 실행 중 |
 | `validating` | Rule Validator / Verify Agent 실행 중 |
 | `cleanup` | Cleanup Runner 실행 중 |
@@ -124,6 +124,7 @@ pending → preflight → sw_install* → rebooting* → post_install → valida
 | `GET /api/jobs/` | 전체 job 목록 |
 | `GET /api/jobs/{job_id}/` | job 상세 (check_results 포함) |
 | `DELETE /api/jobs/{job_id}/` | job 삭제 |
+| `GET /api/reports/{job_id}/` | 리포트 메타 조회 |
 | `GET /api/reports/{job_id}/pdf` | PDF 다운로드 |
 | `GET /api/reports/{job_id}/xlsx` | XLSX 다운로드 |
 | `WS /ws/jobs/{job_id}` | 실시간 상태 구독 |
@@ -299,7 +300,7 @@ rtk gain
 | `REDIS_URL` | ✅ | Redis 접속 URL (`redis://redis:6379/0`) |
 | `NFS_BASE_PATH` | | 결과·로그 루트 경로 (기본: `/srv/inspection`) |
 | `CLAUDE_MODEL` | | 사용 모델 (기본: `claude-sonnet-4-6`) |
-| `CLAUDE_MAX_TOKENS` | | 에이전트 최대 토큰 (기본: `4096`) |
+| `CLAUDE_MAX_TOKENS` | | 에이전트 최대 토큰 fallback (기본: `4096`). 에이전트별 값(Inspect/SW Planner: 1024, Verify: 512)이 우선 — `.claude/rules/agents.md` 참조 |
 | `WS_ENABLED` | | WebSocket 활성화 (기본: `true`) |
 
 전체 목록: `.env.example` 참조.
