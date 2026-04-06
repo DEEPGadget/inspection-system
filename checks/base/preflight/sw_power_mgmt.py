@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import os
 import sys
 import json
 import glob
@@ -10,8 +9,9 @@ import subprocess
 def check_systemctl_service(service_name):
     """Check systemctl service enabled status"""
     try:
-        result = subprocess.run(['systemctl', 'is-enabled', service_name],
-                              capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            ["systemctl", "is-enabled", service_name], capture_output=True, text=True, timeout=5
+        )
         return result.stdout.strip()
     except Exception:
         return "unknown"
@@ -20,7 +20,7 @@ def check_systemctl_service(service_name):
 def read_sysfs_file(path):
     """Read a sysfs file safely"""
     try:
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             return f.read().strip()
     except Exception:
         return None
@@ -29,7 +29,7 @@ def read_sysfs_file(path):
 def check_cpu_governors():
     """Check CPU frequency governors"""
     try:
-        governor_files = glob.glob('/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor')
+        governor_files = glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor")
         if not governor_files:
             return "unknown", 0
 
@@ -38,7 +38,7 @@ def check_cpu_governors():
 
         for gov_file in governor_files:
             try:
-                with open(gov_file, 'r') as f:
+                with open(gov_file, "r") as f:
                     governor = f.read().strip()
                     governors.append(governor)
                     if governor != "performance":
@@ -59,12 +59,11 @@ def check_cpu_governors():
 def check_tuned_profile():
     """Check tuned active profile"""
     try:
-        result = subprocess.run(['tuned-adm', 'active'],
-                              capture_output=True, text=True, timeout=5)
+        result = subprocess.run(["tuned-adm", "active"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
-            for line in result.stdout.split('\n'):
-                if 'Current active profile:' in line:
-                    profile = line.split(':')[1].strip()
+            for line in result.stdout.split("\n"):
+                if "Current active profile:" in line:
+                    profile = line.split(":")[1].strip()
                     return profile
         return "unknown"
     except Exception:
@@ -116,7 +115,11 @@ def main():
             status = "warn"
         elif max_cstate != "unknown" and max_cstate.isdigit() and int(max_cstate) > 1:
             status = "warn"
-        elif tuned_profile not in ["throughput-performance", "latency-performance", "network-latency"]:
+        elif tuned_profile not in [
+            "throughput-performance",
+            "latency-performance",
+            "network-latency",
+        ]:
             status = "warn"
 
         # Build detail string
@@ -129,27 +132,19 @@ def main():
             f"non_perf_cores={non_perf_cores}",
             f"max_cstate={max_cstate}",
             f"turbo_boost={turbo_boost}",
-            f"tuned_profile={tuned_profile}"
+            f"tuned_profile={tuned_profile}",
         ]
 
         detail = "|".join(detail_parts)
 
-        result = {
-            "check": "sw_power_mgmt",
-            "status": status,
-            "detail": detail
-        }
+        result = {"check": "sw_power_mgmt", "status": status, "detail": detail}
 
         print(json.dumps(result))
 
     except Exception as e:
         # Log error to stderr and output fail status
         print(f"Error in sw_power_mgmt check: {e}", file=sys.stderr)
-        result = {
-            "check": "sw_power_mgmt",
-            "status": "fail",
-            "detail": "error=exception"
-        }
+        result = {"check": "sw_power_mgmt", "status": "fail", "detail": "error=exception"}
         print(json.dumps(result))
 
 

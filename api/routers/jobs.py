@@ -25,11 +25,13 @@ async def create_job(body: JobCreate, db: AsyncSession = Depends(get_db)):
     await db.flush()  # id 확보
 
     # Celery 태스크 dispatch
-    from workers.inspect import inspect_server
+    from workers.inspect import run_preflight
 
-    task = inspect_server.apply_async(
-        args=[str(job.id), job.target_host, job.target_user, job.product_profile,
-              body.sudo_password.get_secret_value() if body.sudo_password else None],
+    task = run_preflight.apply_async(
+        args=[str(job.id), job.target_host, job.target_user, job.product_profile],
+        kwargs={
+            "sudo_password": body.sudo_password.get_secret_value() if body.sudo_password else None
+        },
         queue="q_inspect",
     )
     job.celery_task_id = task.id

@@ -3,22 +3,19 @@
 import os
 import sys
 import json
-import glob
 import subprocess
-import re
 
 
 def get_network_interfaces():
     """Get network interface information"""
     try:
-        interfaces = []
-        net_path = '/sys/class/net'
+        net_path = "/sys/class/net"
 
         # Get all network interfaces
         all_ifaces = os.listdir(net_path)
 
         # Filter out virtual/excluded interfaces
-        excluded_prefixes = ['lo', 'docker', 'veth', 'virbr', 'br-', 'tun', 'tap']
+        excluded_prefixes = ["lo", "docker", "veth", "virbr", "br-", "tun", "tap"]
         physical_ifaces = []
 
         for iface in all_ifaces:
@@ -31,20 +28,20 @@ def get_network_interfaces():
         for iface in physical_ifaces:
             try:
                 # Get operstate
-                with open(f'{net_path}/{iface}/operstate', 'r') as f:
+                with open(f"{net_path}/{iface}/operstate", "r") as f:
                     operstate = f.read().strip()
 
                 # Get speed
                 speed_mbps = 0
                 speed_unit = "unknown"
                 try:
-                    with open(f'{net_path}/{iface}/speed', 'r') as f:
+                    with open(f"{net_path}/{iface}/speed", "r") as f:
                         speed_mbps = int(f.read().strip())
 
                     if speed_mbps >= 1000000:
-                        speed_unit = f"{speed_mbps//1000000}TbE"
+                        speed_unit = f"{speed_mbps // 1000000}TbE"
                     elif speed_mbps >= 1000:
-                        speed_unit = f"{speed_mbps//1000}GbE"
+                        speed_unit = f"{speed_mbps // 1000}GbE"
                     else:
                         speed_unit = f"{speed_mbps}MbE"
                 except Exception:
@@ -53,19 +50,14 @@ def get_network_interfaces():
                 # Get MTU
                 mtu = 0
                 try:
-                    with open(f'{net_path}/{iface}/mtu', 'r') as f:
+                    with open(f"{net_path}/{iface}/mtu", "r") as f:
                         mtu = int(f.read().strip())
                 except Exception:
                     mtu = 0
 
-                iface_info = {
-                    'name': iface,
-                    'state': operstate,
-                    'speed': speed_unit,
-                    'mtu': mtu
-                }
+                iface_info = {"name": iface, "state": operstate, "speed": speed_unit, "mtu": mtu}
 
-                if operstate == 'up':
+                if operstate == "up":
                     up_interfaces.append(iface_info)
                 else:
                     down_interfaces.append(iface_info)
@@ -81,15 +73,15 @@ def get_network_interfaces():
 def check_infiniband():
     """Check InfiniBand status"""
     try:
-        result = subprocess.run(['ibstat'], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(["ibstat"], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             port_count = 0
             active_count = 0
 
-            for line in result.stdout.split('\n'):
-                if 'Port ' in line and ':' in line:
+            for line in result.stdout.split("\n"):
+                if "Port " in line and ":" in line:
                     port_count += 1
-                elif 'State:' in line and 'Active' in line:
+                elif "State:" in line and "Active" in line:
                     active_count += 1
 
             return port_count, active_count
@@ -101,8 +93,9 @@ def check_infiniband():
 def check_loopback():
     """Check loopback connectivity"""
     try:
-        result = subprocess.run(['ping', '-c1', '-W1', '127.0.0.1'],
-                              capture_output=True, text=True, timeout=5)
+        result = subprocess.run(
+            ["ping", "-c1", "-W1", "127.0.0.1"], capture_output=True, text=True, timeout=5
+        )
         return result.returncode == 0
     except Exception:
         return False
@@ -134,10 +127,17 @@ def main():
             status = "warn"
 
         # Build up/down interface strings
-        up_ifaces_str = "|".join([f"{iface['name']}({iface['speed']},mtu{iface['mtu']})"
-                                 for iface in up_interfaces]) if up_interfaces else "none"
+        up_ifaces_str = (
+            "|".join(
+                [f"{iface['name']}({iface['speed']},mtu{iface['mtu']})" for iface in up_interfaces]
+            )
+            if up_interfaces
+            else "none"
+        )
 
-        down_ifaces_str = "|".join([iface['name'] for iface in down_interfaces]) if down_interfaces else "none"
+        down_ifaces_str = (
+            "|".join([iface["name"] for iface in down_interfaces]) if down_interfaces else "none"
+        )
 
         # Build detail string
         detail_parts = [
@@ -146,27 +146,19 @@ def main():
             f"down_ifaces={down_ifaces_str}",
             f"ib_ports={ib_ports}",
             f"ib_active={ib_active}",
-            f"loopback={'ok' if loopback_ok else 'fail'}"
+            f"loopback={'ok' if loopback_ok else 'fail'}",
         ]
 
         detail = "|".join(detail_parts)
 
-        result = {
-            "check": "sw_network",
-            "status": status,
-            "detail": detail
-        }
+        result = {"check": "sw_network", "status": status, "detail": detail}
 
         print(json.dumps(result))
 
     except Exception as e:
         # Log error to stderr and output fail status
         print(f"Error in sw_network check: {e}", file=sys.stderr)
-        result = {
-            "check": "sw_network",
-            "status": "fail",
-            "detail": "error=exception"
-        }
+        result = {"check": "sw_network", "status": "fail", "detail": "error=exception"}
         print(json.dumps(result))
 
 

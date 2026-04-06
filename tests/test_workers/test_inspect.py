@@ -31,16 +31,22 @@ def test_nfs_raw_dir(tmp_path, monkeypatch):
     assert result == tmp_path / "results" / job_id / "inspect_raw"
 
 
-def test_profile_path_default():
-    p = _profile_path("default")
-    assert p.name == "default.json"
+def test_profile_path():
+    p = _profile_path("gpu_server")
+    assert p.name == "gpu_server.json"
     assert "checks/profiles" in str(p)
 
 
-def test_script_path():
-    p = _script_path("phase2_sw_basic", "sw_gpu")
-    assert p.name == "sw_gpu.sh"
-    assert "phase2_sw_basic" in str(p)
+def test_script_path_preflight():
+    p = _script_path("preflight", "sw_gpu_hw")
+    assert p.name == "sw_gpu_hw.py"
+    assert "preflight" in str(p)
+
+
+def test_script_path_post_install():
+    p = _script_path("post_install", "sw_gpu_sw")
+    assert p.name == "sw_gpu_sw.py"
+    assert "post_install" in str(p)
 
 
 def test_ssh_key_path_host_specific(tmp_path, monkeypatch):
@@ -67,21 +73,49 @@ def test_ssh_key_path_none(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_profile_loads_default():
-    p = _profile_path("default")
-    assert p.exists(), "default.json 프로파일이 없습니다"
+def test_gpu_server_profile_loads():
+    p = _profile_path("gpu_server")
+    assert p.exists(), "gpu_server.json 프로파일이 없습니다"
     with p.open() as f:
         profile = json.load(f)
     assert "phases" in profile
-    assert isinstance(profile["phases"], dict)
+    assert "preflight" in profile["phases"]
+    assert "post_install" in profile["phases"]
+    assert "collect" in profile["phases"]
 
 
-def test_profile_missing_raises(tmp_path, monkeypatch):
-    """존재하지 않는 프로파일은 FileNotFoundError."""
-    from workers.inspect import _profile_path as pp
+def test_gpu_server_profile_preflight_scripts():
+    with _profile_path("gpu_server").open() as f:
+        profile = json.load(f)
+    scripts = profile["phases"]["preflight"]["scripts"]
+    assert "sw_gpu_hw" in scripts
+    assert "sw_storage_hw" in scripts
+    assert "sw_cpu" in scripts
 
-    p = pp("nonexistent_profile")
-    assert not p.exists()
+
+def test_gpu_server_profile_post_install_scripts():
+    with _profile_path("gpu_server").open() as f:
+        profile = json.load(f)
+    scripts = profile["phases"]["post_install"]["scripts"]
+    assert "sw_gpu_sw" in scripts
+    assert "sw_storage_sw" in scripts
+    assert "stress_gpu" in scripts
+    assert "nccl_bandwidth" in scripts
+
+
+def test_gpu_server_profile_has_validation_rules():
+    with _profile_path("gpu_server").open() as f:
+        profile = json.load(f)
+    assert "validation" in profile
+    assert "rules" in profile["validation"]
+    assert len(profile["validation"]["rules"]) > 0
+
+
+def test_gpu_server_profile_has_cleanup():
+    with _profile_path("gpu_server").open() as f:
+        profile = json.load(f)
+    assert "cleanup" in profile
+    assert "remove_packages" in profile["cleanup"]
 
 
 # ---------------------------------------------------------------------------
@@ -102,73 +136,96 @@ def _parse_output(stdout: str, script_name: str) -> dict:
 
 
 def test_parse_valid_json():
-    stdout = '{"check":"sw_gpu","status":"pass","detail":"8x A100 detected"}'
-    out = _parse_output(stdout, "sw_gpu")
+    stdout = '{"check":"sw_gpu_hw","status":"pass","detail":"gpu_count=8"}'
+    out = _parse_output(stdout, "sw_gpu_hw")
     assert out["status"] == "pass"
-    assert out["check"] == "sw_gpu"
+    assert out["check"] == "sw_gpu_hw"
 
 
 def test_parse_invalid_json_returns_fail():
-    out = _parse_output("not json output", "sw_gpu")
+    out = _parse_output("not json output", "sw_gpu_hw")
     assert out["status"] == "fail"
     assert "JSON parse error" in out["detail"]
 
 
 def test_parse_warn_status():
-    stdout = '{"check":"sw_storage","status":"warn","detail":"one disk slow"}'
-    out = _parse_output(stdout, "sw_storage")
+    stdout = '{"check":"sw_storage_hw","status":"warn","detail":"md_degraded=0"}'
+    out = _parse_output(stdout, "sw_storage_hw")
     assert out["status"] == "warn"
 
 
 # ---------------------------------------------------------------------------
-# _async_inspect 통합 테스트 (SSH + DB mock)
+# 스크립트 파일 존재 확인
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "script_name",
+    [
+        "sw_gpu_hw",
+        "sw_cpu",
+        "sw_memory",
+        "sw_storage_hw",
+        "sw_network",
+        "sw_os_version",
+        "sw_power_mgmt",
+        "sw_auto_update",
+    ],
+)
+def test_preflight_scripts_exist(script_name):
+    p = _script_path("preflight", script_name)
+    assert p.exists(), f"preflight/{script_name}.py 가 없습니다"
+
+
+@pytest.mark.parametrize(
+    "script_name",
+    [
+        "sw_gpu_sw",
+        "sw_storage_sw",
+        "stress_gpu",
+        "stress_cpu",
+        "nccl_bandwidth",
+    ],
+)
+def test_post_install_scripts_exist(script_name):
+    p = _script_path("post_install", script_name)
+    assert p.exists(), f"post_install/{script_name}.py 가 없습니다"
+
+
+def test_collect_script_exists():
+    p = _script_path("collect", "collect_all_logs")
+    assert p.exists(), "collect/collect_all_logs.py 가 없습니다"
+
+
+# ---------------------------------------------------------------------------
+# _async_preflight NFS 파일 생성 확인 (SSH + DB mock)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_async_inspect_success(tmp_path, monkeypatch):
-    """SSH 성공 시나리오 — DB와 SSH를 mock하고 NFS 파일 생성 확인."""
+async def test_async_preflight_creates_nfs_dir(tmp_path, monkeypatch):
+    """SSH 성공 시나리오 — NFS 결과 디렉토리 생성 확인."""
     job_id = str(uuid.uuid4())
     monkeypatch.setattr("workers.inspect.settings.nfs_base_path", str(tmp_path))
     monkeypatch.setattr("workers.inspect.settings.ssh_key_dir", str(tmp_path / "keys"))
 
-    # 프로파일: phase2_sw_basic/sw_cpu 한 개만 활성화
-    profile_data = {
-        "phases": {
-            "phase2_sw_basic": {"enabled": True, "scripts": ["sw_cpu"]},
-        }
-    }
+    # 테스트 프로파일 (스크립트 없는 빈 preflight)
     profiles_dir = Path(__file__).parent.parent.parent / "checks" / "profiles"
-    test_profile = profiles_dir / "_test_profile.json"
-    test_profile.write_text(json.dumps(profile_data))
-
-    # 스크립트 파일 생성
-    script_dir = Path(__file__).parent.parent.parent / "checks" / "base" / "phase2_sw_basic"
-    script_dir.mkdir(parents=True, exist_ok=True)
-    test_script = script_dir / "sw_cpu.sh"
-    if not test_script.exists():
-        test_script.write_text(
-            '#!/bin/bash\necho \'{"check":"sw_cpu","status":"pass","detail":"ok"}\''
+    test_profile = profiles_dir / "_test_preflight.json"
+    test_profile.write_text(
+        json.dumps(
+            {
+                "pre_install": {"baseline": [], "stress_tools": []},
+                "phases": {"preflight": {"scripts": []}},
+            }
         )
-
-    # SSH mock
-    mock_result = MagicMock()
-    mock_result.stdout = '{"check":"sw_cpu","status":"pass","detail":"4x Intel Xeon"}'
-    mock_result.stderr = ""
-
-    mock_sftp = AsyncMock()
-    mock_sftp.__aenter__ = AsyncMock(return_value=mock_sftp)
-    mock_sftp.__aexit__ = AsyncMock(return_value=False)
-    mock_sftp.put = AsyncMock()
-    mock_sftp.chmod = AsyncMock()
+    )
 
     mock_conn = AsyncMock()
     mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
     mock_conn.__aexit__ = AsyncMock(return_value=False)
-    mock_conn.run = AsyncMock(return_value=mock_result)
-    mock_conn.start_sftp_client = MagicMock(return_value=mock_sftp)
+    mock_conn.run = AsyncMock(return_value=MagicMock(exit_status=0, stdout="", stderr=""))
 
-    # DB mock
     mock_session = AsyncMock()
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
@@ -179,38 +236,36 @@ async def test_async_inspect_success(tmp_path, monkeypatch):
                     id=uuid.UUID(job_id),
                     status="pending",
                     updated_at=None,
+                    sw_requirements=None,
+                    target_host="10.0.0.1",
+                    target_user="root",
+                    product_profile="_test_preflight",
                 )
             )
         )
     )
     mock_session.commit = AsyncMock()
-    mock_session.add = MagicMock()
 
-    mock_session_factory = MagicMock(return_value=mock_session)
-
-    # validate mock
-    mock_validate = MagicMock()
-    mock_validate.apply_async = MagicMock()
+    mock_run_post_install = MagicMock()
+    mock_run_post_install.apply_async = MagicMock()
 
     with (
-        patch("workers.inspect._SessionLocal", mock_session_factory),
         patch("asyncssh.connect", return_value=mock_conn),
-        patch("workers.inspect.validate_results", mock_validate, create=True),
+        patch(
+            "workers.inspect._make_session",
+            return_value=(MagicMock(), MagicMock(return_value=mock_session)),
+        ),
+        patch("workers.inspect.run_post_install", mock_run_post_install),
     ):
-        from workers.inspect import _async_inspect
+        from workers.inspect import _async_preflight
 
-        # validate import를 mock하기 위해 모듈 패치
-        with patch.dict(
-            "sys.modules", {"workers.validate": MagicMock(validate_results=mock_validate)}
-        ):
-            try:
-                await _async_inspect(job_id, "10.0.0.1", "root", "_test_profile")
-            except Exception:
-                pass  # validate import 실패는 무시 (mock 환경)
+        try:
+            await _async_preflight(job_id, "10.0.0.1", "root", "_test_preflight", None)
+        except Exception:
+            pass
 
-    # NFS raw 파일이 생성됐는지 확인
+    # NFS 디렉토리 생성 확인
     raw_dir = tmp_path / "results" / job_id / "inspect_raw"
     assert raw_dir.exists()
 
-    # 정리
     test_profile.unlink(missing_ok=True)

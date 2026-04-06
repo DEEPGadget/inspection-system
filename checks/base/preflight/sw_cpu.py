@@ -6,17 +6,16 @@ import json
 import glob
 import re
 import subprocess
-from pathlib import Path
 
 
 def parse_cpuinfo():
     """Parse /proc/cpuinfo for CPU information"""
     try:
-        with open('/proc/cpuinfo', 'r') as f:
+        with open("/proc/cpuinfo", "r") as f:
             content = f.read()
 
         # Parse CPU model name
-        model_match = re.search(r'model name\s*:\s*(.+)', content)
+        model_match = re.search(r"model name\s*:\s*(.+)", content)
         cpu_model = model_match.group(1).strip() if model_match else "unknown"
 
         # Count physical CPUs and cores
@@ -24,17 +23,19 @@ def parse_cpuinfo():
         cpu_cores_per_socket = 0
         processor_count = 0
 
-        for line in content.split('\n'):
-            if line.startswith('physical id'):
-                phys_id = line.split(':')[1].strip()
+        for line in content.split("\n"):
+            if line.startswith("physical id"):
+                phys_id = line.split(":")[1].strip()
                 physical_ids.add(phys_id)
-            elif line.startswith('cpu cores'):
-                cpu_cores_per_socket = int(line.split(':')[1].strip())
-            elif line.startswith('processor'):
+            elif line.startswith("cpu cores"):
+                cpu_cores_per_socket = int(line.split(":")[1].strip())
+            elif line.startswith("processor"):
                 processor_count += 1
 
         cpu_sockets = len(physical_ids) if physical_ids else 1
-        cpu_cores_total = cpu_sockets * cpu_cores_per_socket if cpu_cores_per_socket else processor_count
+        cpu_cores_total = (
+            cpu_sockets * cpu_cores_per_socket if cpu_cores_per_socket else processor_count
+        )
 
         return cpu_model, cpu_sockets, cpu_cores_total, processor_count
     except Exception:
@@ -44,7 +45,7 @@ def parse_cpuinfo():
 def get_cpu_freq_ghz():
     """Get CPU max frequency in GHz"""
     try:
-        with open('/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq', 'r') as f:
+        with open("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", "r") as f:
             freq_khz = int(f.read().strip())
         return round(freq_khz / 1000000, 2)
     except Exception:
@@ -55,20 +56,20 @@ def get_cpu_temp():
     """Get CPU temperature in Celsius"""
     try:
         # Check thermal zones first
-        thermal_zones = glob.glob('/sys/class/thermal/thermal_zone*/type')
+        thermal_zones = glob.glob("/sys/class/thermal/thermal_zone*/type")
         max_temp = 0
 
         for zone_type_path in thermal_zones:
             try:
-                with open(zone_type_path, 'r') as f:
+                with open(zone_type_path, "r") as f:
                     zone_type = f.read().strip()
 
                 # Look for CPU-related thermal zones
-                if zone_type in ['x86_pkg_temp', 'acpitz', 'cpu']:
+                if zone_type in ["x86_pkg_temp", "acpitz", "cpu"]:
                     zone_dir = os.path.dirname(zone_type_path)
-                    temp_path = os.path.join(zone_dir, 'temp')
+                    temp_path = os.path.join(zone_dir, "temp")
 
-                    with open(temp_path, 'r') as f:
+                    with open(temp_path, "r") as f:
                         temp_millicelsius = int(f.read().strip())
                         temp_celsius = temp_millicelsius / 1000
                         max_temp = max(max_temp, temp_celsius)
@@ -80,11 +81,11 @@ def get_cpu_temp():
 
         # Fallback to sensors command
         try:
-            result = subprocess.run(['sensors'], capture_output=True, text=True, timeout=5)
+            result = subprocess.run(["sensors"], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
-                for line in result.stdout.split('\n'):
+                for line in result.stdout.split("\n"):
                     # Look for "Package id N: +XX.X°C" pattern
-                    match = re.search(r'Package id \d+:\s*\+?(\d+\.\d+)°?C', line)
+                    match = re.search(r"Package id \d+:\s*\+?(\d+\.\d+)°?C", line)
                     if match:
                         temp = float(match.group(1))
                         max_temp = max(max_temp, temp)
@@ -123,7 +124,7 @@ def main():
             f"sockets={cpu_sockets}",
             f"cores={cpu_cores_total}",
             f"threads={processor_count}",
-            f"freq_ghz={cpu_freq_ghz}"
+            f"freq_ghz={cpu_freq_ghz}",
         ]
 
         if cpu_max_temp_c is not None:
@@ -133,22 +134,14 @@ def main():
 
         detail = "|".join(detail_parts)
 
-        result = {
-            "check": "sw_cpu",
-            "status": status,
-            "detail": detail
-        }
+        result = {"check": "sw_cpu", "status": status, "detail": detail}
 
         print(json.dumps(result))
 
     except Exception as e:
         # Log error to stderr and output fail status
         print(f"Error in sw_cpu check: {e}", file=sys.stderr)
-        result = {
-            "check": "sw_cpu",
-            "status": "fail",
-            "detail": "error=exception"
-        }
+        result = {"check": "sw_cpu", "status": "fail", "detail": "error=exception"}
         print(json.dumps(result))
 
 

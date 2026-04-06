@@ -1,53 +1,58 @@
 {
-  "_TODO_C4": "inspect.py 리팩토링 시 phase 구조 → preflight/post_install/collect 구조로 전면 재작성",
   "profile_name": "gpu_server",
-  "product_line": "gpu",
   "pre_install": {
-    "enabled": true,
-    "timeout": 300,
-    "packages": ["stress-ng", "lm-sensors"]
+    "baseline": ["pciutils", "nvme-cli", "ipmitool", "lm-sensors"],
+    "stress_tools": ["stress-ng"]
   },
   "phases": {
-    "phase2_sw_basic": {
-      "enabled": true,
-      "scripts": ["sw_cpu", "sw_memory", "sw_gpu", "sw_storage", "sw_network"]
+    "preflight": {
+      "scripts": [
+        "sw_gpu_hw",
+        "sw_cpu",
+        "sw_memory",
+        "sw_storage_hw",
+        "sw_network",
+        "sw_os_version",
+        "sw_power_mgmt",
+        "sw_auto_update"
+      ]
     },
-    "phase3_os_config": {
-      "enabled": true,
-      "scripts": ["sw_power_mgmt", "sw_auto_update"]
-    },
-    "phase4_stress": {
-      "enabled": true,
-      "scripts": ["stress_gpu", "stress_cpu"],
+    "post_install": {
+      "scripts": [
+        "sw_gpu_sw",
+        "sw_storage_sw",
+        "stress_gpu",
+        "stress_cpu",
+        "nccl_bandwidth"
+      ],
       "timeout": 7200,
       "env": {
         "GPU_BURNIN_DURATION": "300",
         "CPU_BURNIN_DURATION": "120"
       }
     },
-    "phase5_nccl": {
-      "enabled": true,
-      "scripts": ["nccl_bandwidth"],
-      "timeout": 120,
-      "env": {
-        "NCCL_ALLREDUCE_MIN_BW_2GPU": "30",
-        "NCCL_ALLREDUCE_MIN_BW_4GPU": "5",
-        "NCCL_TEST_SIZE": "1G"
-      }
-    },
-    "phase6_sw_install": {
-      "enabled": true,
-      "scripts": ["sw_os_version"]
-    },
-    "phase7_collect": {
-      "enabled": true,
+    "collect": {
       "scripts": ["collect_all_logs"]
     }
   },
-  "temperature_thresholds": {
-    "gpu_idle_max": 50,
-    "gpu_load_max": 87,
-    "cpu_idle_max": 55,
-    "cpu_load_max": 100
+  "validation": {
+    "rules": [
+      {"check": "sw_gpu_hw",      "metric": "gpu_count",            "fail_if_not_equal": "expected_gpu_count"},
+      {"check": "sw_gpu_sw",      "metric": "gpu_max_temp_c",       "fail_above": 87,  "agent_zone_above": 75},
+      {"check": "sw_cpu",         "metric": "cpu_max_temp_c",       "fail_above": 100, "agent_zone_above": 85},
+      {"check": "sw_gpu_sw",      "metric": "ecc_delta_uncorr",     "fail_above": 0},
+      {"check": "nccl_bandwidth", "metric": "bw_2gpu_gbs",          "fail_below": 30,  "agent_zone_below": 25},
+      {"check": "nccl_bandwidth", "metric": "bw_4gpu_gbs",          "fail_below": 5,   "agent_zone_below": 3},
+      {"check": "sw_power_mgmt",  "metric": "sleep_target",         "fail_if_not": "masked"},
+      {"check": "sw_auto_update", "metric": "unattended_upgrades_active", "fail_if": "active"}
+    ],
+    "agent_trigger": {
+      "warn_count_threshold": 3
+    }
+  },
+  "cleanup": {
+    "remove_packages": ["stress-ng"],
+    "remove_dirs": ["/opt/gpu-burn", "/opt/nccl-tests"],
+    "on_failure": "warn"
   }
 }
