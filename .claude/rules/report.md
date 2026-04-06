@@ -8,7 +8,7 @@
 | XLSX | `workers/report.py` (Jinja2) | `/srv/inspection/results/{job_id}/report.xlsx` |
 
 `workers/report.py`는 `q_report` 큐에서 실행. 항상 실행 (pipeline 성공/실패 무관).  
-리포트 생성 실패 시 → `job.status = "report_failed"` (검수 결과 자체는 유효, 상태 덮어쓰기 금지).
+리포트 생성 실패 시 → `job.status = "report_failed"` 로 확정. `check_results` 개별 판정·로그는 그대로 유지 (검수 결과 자체는 유효).
 
 ---
 

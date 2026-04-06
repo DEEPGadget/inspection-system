@@ -12,8 +12,8 @@
 ## 적용 순서 (배포 시 매번)
 
 ```bash
-# 1. API/워커 중지 (worker_sw_install은 구현 후 추가)
-docker compose stop api worker_inspect worker_validate worker_report
+# 1. API/워커 중지
+docker compose stop api worker_inspect worker_sw_install worker_validate worker_report
 
 # 2. 마이그레이션 적용
 docker compose run --rm api alembic upgrade head
