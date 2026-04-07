@@ -238,27 +238,57 @@ def test_ws_race_window_terminal_transition():
     assert reconciled["status"] == "pass"
 
 
-def test_ws_terminal_failed_job_closes_immediately():
-    """P1 회귀: 'failed' 상태 Job → terminal 인식 후 즉시 close."""
+def _make_mock_redis_pubsub(messages=()):
+    """async-for 가능한 pubsub mock 생성."""
+
+    async def _listen():
+        for msg in messages:
+            yield msg
+
+    mock_pubsub = AsyncMock()
+    mock_pubsub.__aenter__ = AsyncMock(return_value=mock_pubsub)
+    mock_pubsub.__aexit__ = AsyncMock(return_value=False)
+    mock_pubsub.subscribe = AsyncMock()
+    mock_pubsub.listen = _listen
+
+    mock_redis = MagicMock()
+    mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+    mock_redis.aclose = AsyncMock()
+    return mock_redis
+
+
+def test_ws_failed_job_sends_status_stays_open():
+    """'failed'는 non-terminal — 초기 상태 전송 후 서버가 즉시 close하지 않음.
+    validate.py가 cleanup 전에 publish하는 중간 상태이므로 클라이언트가
+    cleanup→reporting→최종 report.py publish까지 수신할 수 있어야 함."""
     job_id = str(uuid.uuid4())
     fake_job = _make_job(job_id, "failed")
     mock_factory = _mock_db_session(fake_job)
+    mock_redis = _make_mock_redis_pubsub()
 
-    with patch("api.websocket.AsyncSessionLocal", mock_factory):
+    with (
+        patch("api.websocket.AsyncSessionLocal", mock_factory),
+        patch("api.websocket.aioredis.from_url", return_value=mock_redis),
+    ):
         with TestClient(app) as client:
             with client.websocket_connect(f"/ws/jobs/{job_id}") as ws:
                 data = ws.receive_json()
+                # 서버가 소켓을 닫지 않음. 클라이언트가 닫기 전까지 open 상태.
 
     assert data["status"] == "failed"
 
 
-def test_ws_terminal_rejected_job_closes_immediately():
-    """P1 회귀: 'rejected' 상태 Job → terminal 인식 후 즉시 close."""
+def test_ws_rejected_job_sends_status_stays_open():
+    """'rejected'는 non-terminal — 초기 상태 전송 후 서버가 즉시 close하지 않음."""
     job_id = str(uuid.uuid4())
     fake_job = _make_job(job_id, "rejected")
     mock_factory = _mock_db_session(fake_job)
+    mock_redis = _make_mock_redis_pubsub()
 
-    with patch("api.websocket.AsyncSessionLocal", mock_factory):
+    with (
+        patch("api.websocket.AsyncSessionLocal", mock_factory),
+        patch("api.websocket.aioredis.from_url", return_value=mock_redis),
+    ):
         with TestClient(app) as client:
             with client.websocket_connect(f"/ws/jobs/{job_id}") as ws:
                 data = ws.receive_json()

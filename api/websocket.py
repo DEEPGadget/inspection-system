@@ -3,10 +3,17 @@ WebSocket endpoint — Job 상태 실시간 push.
 
 연결 흐름:
   1. 접속 시 현재 DB 상태 즉시 전송
-  2. terminal 상태(pass/fail/error)면 즉시 close
+  2. terminal 상태(pass/report_failed/fail/error)면 즉시 close
   3. 진행 중이면 Redis pub/sub 구독
   4. 구독 후 DB 재확인 — subscribe 직전 race window에서 발생한 terminal 전이 감지
   5. terminal 메시지 수신 또는 클라이언트 disconnect 시 종료
+
+terminal 정책:
+  - "pass", "report_failed" — 파이프라인 완전 종료 후 서버가 close
+  - "failed", "rejected"  — validate.py 등이 중간 단계에서도 publish하므로
+    non-terminal 처리. cleanup → reporting → report.py 최종 publish까지
+    스트림 유지. 클라이언트가 이 상태를 수신 후 소켓 닫기를 결정.
+  - "fail", "error"       — v1 deprecated; 하위 호환을 위해 terminal 유지
 """
 
 import json
@@ -26,7 +33,7 @@ from config.settings import settings
 log = structlog.get_logger(__name__)
 router = APIRouter()
 
-_TERMINAL = frozenset({"pass", "failed", "rejected", "report_failed", "fail", "error"})
+_TERMINAL = frozenset({"pass", "report_failed", "fail", "error"})
 
 
 @router.websocket("/jobs/{job_id}")
