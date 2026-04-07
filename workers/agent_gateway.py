@@ -2,18 +2,20 @@
 Agent Gateway — 에이전트 호출 판단 + compact input 구성.
 
 호출 주체:
-  - validate.py → call_verify_agent (agent_zone 경계값 종합 판정)
-  - inspect.py  → call_inspect_agent (스크립트 실패 진단)
-  - sw_install.py → call_sw_planner_agent (Blocker 7에서 구현)
+  - validate.py    → call_verify_agent (agent_zone 경계값 종합 판정)
+  - inspect.py     → call_inspect_agent (스크립트 실패 진단)
+  - sw_planner.py  → call_sw_planner_agent (SW 요구사항 구조화 + 설치계획 생성)
+  - sw_install.py  → call_sw_planner_agent (설치 실패 후 재계획)
 
 토큰 정책:
-  - Verify Agent:    max_tokens=512
-  - Inspect Agent:   max_tokens=1024
-  - SW Planner Agent: max_tokens=1024 (Blocker 7에서 구현)
+  - Verify Agent:      max_tokens=512
+  - Inspect Agent:     max_tokens=1024
+  - SW Planner Agent:  max_tokens=1024
 
 반환 구조:
-  call_verify_agent  → {"verdict": "pass" | "reject", "reason": str}
-  call_inspect_agent → {"action": "retry_script" | "fail", "reason": str}
+  call_verify_agent     → {"verdict": "pass" | "reject", "reason": str}
+  call_inspect_agent    → {"action": "retry_script" | "fail", "reason": str}
+  call_sw_planner_agent → {"plan": list[dict], "reason": str}
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ log = structlog.get_logger(__name__)
 _PROMPTS_DIR = Path(__file__).parent.parent / "config" / "prompts"
 _VERIFY_PROMPT_PATH = _PROMPTS_DIR / "verify_agent.txt"
 _INSPECT_PROMPT_PATH = _PROMPTS_DIR / "inspect_agent.txt"
+_SW_PLANNER_PROMPT_PATH = _PROMPTS_DIR / "sw_planner_agent.txt"
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +212,7 @@ async def call_inspect_agent(
 
 
 # ---------------------------------------------------------------------------
-# SW Planner Agent (stub — Blocker 7에서 구현)
+# SW Planner Agent
 # ---------------------------------------------------------------------------
 
 
@@ -222,9 +225,45 @@ async def call_sw_planner_agent(
     SW Planner Agent 호출.
     비정형 SW 요구사항 구조화, 호환성 판단, 설치계획 JSON 생성.
 
-    Blocker 7 (workers/sw_planner.py)에서 구현 예정.
+    Args:
+        job_id: Job UUID str
+        sw_requirements: sw_requirements.md 원문
+        failed_step: 실패한 설치 단계 (재계획 시; 최초 계획 시 None)
 
     Returns:
-        {"plan": [...], "reason": str}
+        {"plan": list[dict], "reason": str}
+        에러 시: {"plan": [], "reason": "SW Planner Agent 호출 실패: <error>"}
     """
-    raise NotImplementedError("call_sw_planner_agent: Blocker 7에서 구현")
+    system_prompt = _SW_PLANNER_PROMPT_PATH.read_text(encoding="utf-8")
+
+    failed_section = f"\n## 실패한 설치 단계\n```\n{failed_step}\n```\n" if failed_step else ""
+    user_content = (
+        f"## Job ID\n{job_id}\n\n"
+        f"## SW 요구사항\n```markdown\n{sw_requirements}\n```\n"
+        f"{failed_section}\n"
+        f"위 요구사항을 분석하여 설치 계획 JSON으로 응답하세요."
+    )
+
+    log.info("agent_gateway.sw_planner.call", job_id=job_id, has_failed_step=bool(failed_step))
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    try:
+        raw = await _call_claude(client, system_prompt, user_content, max_tokens=1024)
+    except Exception as exc:
+        log.error("agent_gateway.sw_planner.error", job_id=job_id, error=str(exc))
+        return {"plan": [], "reason": f"SW Planner Agent 호출 실패: {exc}"}
+
+    log.debug("agent_gateway.sw_planner.raw", job_id=job_id, preview=raw[:200])
+
+    parsed = _parse_json_response(raw)
+    if parsed is None:
+        log.warning("agent_gateway.sw_planner.parse_failed", job_id=job_id, preview=raw[:300])
+        return {"plan": [], "reason": f"SW Planner Agent 응답 파싱 실패: {raw[:200]}"}
+
+    plan = parsed.get("plan", [])
+    if not isinstance(plan, list):
+        log.warning("agent_gateway.sw_planner.invalid_plan", job_id=job_id)
+        plan = []
+
+    reason = parsed.get("reason", "")
+    log.info("agent_gateway.sw_planner.result", job_id=job_id, plan_count=len(plan))
+    return {"plan": plan, "reason": reason}

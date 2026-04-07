@@ -3,7 +3,6 @@ Agent Gateway 유닛 테스트.
 Claude API 호출은 모두 mock — 실제 API 요청 없음.
 """
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
 from workers.agent_gateway import (
@@ -202,10 +201,53 @@ async def test_inspect_agent_stderr_truncated_to_2000():
 
 
 # ---------------------------------------------------------------------------
-# call_sw_planner_agent (stub)
+# call_sw_planner_agent
 # ---------------------------------------------------------------------------
 
 
-async def test_sw_planner_agent_raises_not_implemented():
-    with pytest.raises(NotImplementedError):
-        await call_sw_planner_agent("job-1", "- CUDA 12.4\n- PyTorch 2.3")
+async def test_sw_planner_agent_returns_plan():
+    with patch("workers.agent_gateway._call_claude", new_callable=AsyncMock) as mock_call:
+        mock_call.return_value = '{"plan": [{"name": "cuda", "version": "12.4", "action": "install"}], "reason": "요구사항 분석 완료"}'
+        result = await call_sw_planner_agent("job-1", "- CUDA 12.4\n- PyTorch 2.3")
+    assert isinstance(result["plan"], list)
+    assert result["plan"][0]["name"] == "cuda"
+    assert result["reason"] == "요구사항 분석 완료"
+
+
+async def test_sw_planner_agent_api_error_returns_empty_plan():
+    """API 호출 실패 시 빈 plan + 에러 메시지 반환."""
+    with patch("workers.agent_gateway._call_claude", new_callable=AsyncMock) as mock_call:
+        mock_call.side_effect = Exception("API 연결 실패")
+        result = await call_sw_planner_agent("job-1", "- CUDA 12.4")
+    assert result["plan"] == []
+    assert "SW Planner Agent 호출 실패" in result["reason"]
+
+
+async def test_sw_planner_agent_parse_failure_returns_empty_plan():
+    """응답 파싱 실패 시 빈 plan 반환."""
+    with patch("workers.agent_gateway._call_claude", new_callable=AsyncMock) as mock_call:
+        mock_call.return_value = "계획: CUDA 설치 후 PyTorch 설치"  # JSON 아님
+        result = await call_sw_planner_agent("job-1", "- CUDA 12.4")
+    assert result["plan"] == []
+    assert "파싱 실패" in result["reason"]
+
+
+async def test_sw_planner_agent_invalid_plan_type_normalized():
+    """plan이 list가 아닌 경우 빈 list로 정규화."""
+    with patch("workers.agent_gateway._call_claude", new_callable=AsyncMock) as mock_call:
+        mock_call.return_value = '{"plan": "CUDA 설치", "reason": "설명"}'
+        result = await call_sw_planner_agent("job-1", "- CUDA 12.4")
+    assert result["plan"] == []
+
+
+async def test_sw_planner_agent_with_failed_step():
+    """failed_step 전달 시 user_content에 포함되는지 확인."""
+    with patch("workers.agent_gateway._call_claude", new_callable=AsyncMock) as mock_call:
+        mock_call.return_value = '{"plan": [], "reason": "재계획 완료"}'
+        await call_sw_planner_agent(
+            "job-1",
+            "- CUDA 12.4",
+            failed_step="nvidia-driver 550 설치 실패: dpkg 충돌",
+        )
+    _, _, user_content = mock_call.call_args.args
+    assert "nvidia-driver 550 설치 실패" in user_content
