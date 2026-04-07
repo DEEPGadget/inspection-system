@@ -3,6 +3,7 @@ Rule Validator 유닛 테스트.
 DB·API 호출 없음 — 순수 함수 판정 로직만 검증.
 """
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from workers.rule_validator import _parse_detail, evaluate
@@ -12,9 +13,21 @@ from workers.rule_validator import _parse_detail, evaluate
 # 헬퍼
 # ---------------------------------------------------------------------------
 
+_DEFAULT_TS = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
-def _cr(check_name: str, detail: str) -> MagicMock:
-    return MagicMock(check_name=check_name, detail=detail)
+
+def _cr(
+    check_name: str,
+    detail: str,
+    status: str = "pass",
+    created_at: datetime | None = None,
+) -> MagicMock:
+    mock = MagicMock()
+    mock.check_name = check_name
+    mock.detail = detail
+    mock.status = status
+    mock.created_at = created_at or _DEFAULT_TS
+    return mock
 
 
 # ---------------------------------------------------------------------------
@@ -382,3 +395,62 @@ def test_gpu_server_gpu_count_mismatch():
     out = evaluate(GPU_SERVER_RULES, results, expected_specs={"expected_gpu_count": 8})
     assert out["verdict"] == "fail"
     assert any(i["metric"] == "gpu_count" for i in out["fail_items"])
+
+
+# ---------------------------------------------------------------------------
+# evaluate — missing metric fail-closed (P1 fix)
+# ---------------------------------------------------------------------------
+
+
+def test_missing_metric_on_failed_check_returns_fail():
+    """check status=fail이고 metric 값 없으면 fail_closed → verdict=fail."""
+    rules = [{"check": "sw_gpu_sw", "metric": "gpu_max_temp_c", "fail_above": 87}]
+    # sw_gpu_sw가 nvidia_smi=missing 으로 fail 보고 (gpu_max_temp_c 없음)
+    results = [_cr("sw_gpu_sw", "nvidia_smi=missing", status="fail")]
+    out = evaluate(rules, results, expected_specs=None)
+    assert out["verdict"] == "fail"
+    assert len(out["fail_items"]) == 1
+    assert out["fail_items"][0]["metric"] == "gpu_max_temp_c"
+    assert out["fail_items"][0]["value"] == "missing"
+    assert out["fail_items"][0]["rule"] == "missing_metric"
+
+
+def test_missing_metric_on_passed_check_skips_rule():
+    """check status=pass이고 metric 값 없으면 기존과 동일하게 규칙 건너뜀."""
+    rules = [{"check": "sw_gpu_sw", "metric": "nonexistent_metric", "fail_above": 0}]
+    results = [_cr("sw_gpu_sw", "gpu_max_temp_c=45", status="pass")]
+    out = evaluate(rules, results, expected_specs=None)
+    assert out["verdict"] == "pass"
+    assert out["fail_items"] == []
+
+
+# ---------------------------------------------------------------------------
+# evaluate — duplicate check_results dedup (P2 fix)
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_check_results_uses_newest():
+    """동일 check_name 결과 중 created_at 최신 레코드를 사용."""
+    rules = [{"check": "sw_gpu_sw", "metric": "gpu_max_temp_c", "fail_above": 87}]
+    old_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    new_ts = datetime(2026, 1, 1, 0, 1, 0, tzinfo=timezone.utc)
+    results = [
+        _cr("sw_gpu_sw", "gpu_max_temp_c=92", created_at=old_ts),  # 구버전 (FAIL 값)
+        _cr("sw_gpu_sw", "gpu_max_temp_c=45", created_at=new_ts),  # 최신 (정상 값)
+    ]
+    out = evaluate(rules, results, expected_specs=None)
+    # 최신 레코드(45°C)를 사용해야 하므로 pass
+    assert out["verdict"] == "pass"
+
+
+def test_duplicate_check_results_newest_is_fail():
+    """최신 레코드가 FAIL 값이면 fail 판정."""
+    rules = [{"check": "sw_gpu_sw", "metric": "gpu_max_temp_c", "fail_above": 87}]
+    old_ts = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    new_ts = datetime(2026, 1, 1, 0, 1, 0, tzinfo=timezone.utc)
+    results = [
+        _cr("sw_gpu_sw", "gpu_max_temp_c=45", created_at=old_ts),  # 구버전 (정상 값)
+        _cr("sw_gpu_sw", "gpu_max_temp_c=92", created_at=new_ts),  # 최신 (FAIL 값)
+    ]
+    out = evaluate(rules, results, expected_specs=None)
+    assert out["verdict"] == "fail"

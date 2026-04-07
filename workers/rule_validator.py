@@ -129,8 +129,15 @@ def evaluate(
     """
     specs = expected_specs or {}
 
-    # check_name → detail 매핑
-    detail_map: dict[str, str] = {cr.check_name: cr.detail or "" for cr in check_results}
+    # check_name → 최신 CheckResult 매핑 (중복 시 created_at 기준 최신 선택)
+    _cr_by_name: dict = {}
+    for cr in check_results:
+        existing = _cr_by_name.get(cr.check_name)
+        if existing is None or cr.created_at > existing.created_at:
+            _cr_by_name[cr.check_name] = cr
+
+    detail_map: dict[str, str] = {name: cr.detail or "" for name, cr in _cr_by_name.items()}
+    status_map: dict[str, str] = {name: cr.status for name, cr in _cr_by_name.items()}
 
     fail_items: list[dict] = []
     warn_items: list[dict] = []
@@ -149,7 +156,23 @@ def evaluate(
         parsed = _parse_detail(detail_map[check_name])
         metric_val = parsed.get(metric)
         if metric_val is None:
-            log.warning("rule_validator.missing_metric", check=check_name, metric=metric)
+            if status_map.get(check_name) == "fail":
+                log.warning(
+                    "rule_validator.missing_metric_fail_closed",
+                    check=check_name,
+                    metric=metric,
+                )
+                fail_items.append(
+                    {
+                        "check": check_name,
+                        "metric": metric,
+                        "value": "missing",
+                        "rule": "missing_metric",
+                        "threshold": None,
+                    }
+                )
+            else:
+                log.warning("rule_validator.missing_metric", check=check_name, metric=metric)
             continue
 
         # FAIL 판정 — FAIL이면 agent_zone 확인 불필요 (Decision 2: FAIL 우선 확정)
