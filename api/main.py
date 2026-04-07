@@ -6,6 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.database import Base, engine
 from api.routers import jobs, reports
 from api import websocket
+from config.logging import configure_logging
+
+configure_logging()
 
 
 @asynccontextmanager
