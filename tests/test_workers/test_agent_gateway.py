@@ -65,6 +65,18 @@ def test_parse_json_empty_returns_none():
     assert result is None
 
 
+def test_parse_json_list_returns_none():
+    """유효한 JSON이라도 dict가 아니면 None 반환."""
+    result = _parse_json_response('[{"verdict": "pass"}]')
+    assert result is None
+
+
+def test_parse_json_string_returns_none():
+    """JSON string은 dict가 아니므로 None 반환."""
+    result = _parse_json_response('"pass"')
+    assert result is None
+
+
 # ---------------------------------------------------------------------------
 # call_verify_agent
 # ---------------------------------------------------------------------------

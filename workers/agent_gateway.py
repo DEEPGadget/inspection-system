@@ -72,13 +72,15 @@ def _parse_json_response(text: str) -> dict | None:
         stripped = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
 
     try:
-        return json.loads(stripped)
+        result = json.loads(stripped)
+        return result if isinstance(result, dict) else None
     except json.JSONDecodeError:
         start = stripped.find("{")
         end = stripped.rfind("}") + 1
         if start >= 0 and end > start:
             try:
-                return json.loads(stripped[start:end])
+                result = json.loads(stripped[start:end])
+                return result if isinstance(result, dict) else None
             except json.JSONDecodeError:
                 pass
 
