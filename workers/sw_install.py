@@ -1252,7 +1252,6 @@ async def _async_sw_install(
                     ok, detail = await _execute_agent_plan(conn, secret, agent_r["plan"])
                 if ok:
                     log.info("sw_install.recovery.success", job_id=job_id)
-                    hard_failures = []
                 else:
                     log.warning("sw_install.recovery.failed", job_id=job_id, detail=detail)
                     unrecoverable = hard_failures
