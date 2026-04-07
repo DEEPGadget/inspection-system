@@ -467,21 +467,10 @@ async def _async_post_install(
             _dispatch_cleanup(job_id, target_host, target_user, product_profile, sudo_password)
             return
 
-        async with SessionLocal() as session:
-            await _update_job(session, job_id, status="validating", result_path=str(raw_dir))
-        await publish_job_status(job_id, "validating")
-
-        from workers.validate import validate_results
-
-        validate_results.apply_async(
-            args=[job_id],
-            kwargs={
-                "sudo_password": sudo_password,
-                "target_host": target_host,
-                "target_user": target_user,
-                "product_profile": product_profile,
-            },
-            queue="q_validate",
+        run_collect.apply_async(
+            args=[job_id, target_host, target_user, product_profile],
+            kwargs={"sudo_password": sudo_password},
+            queue="q_inspect",
         )
         log.info("post_install.done", job_id=job_id)
 
@@ -522,6 +511,109 @@ def run_post_install(
     except Exception as exc:
         asyncio.run(_mark_failed(job_id, str(exc)))
         raise self.retry(exc=exc)
+
+
+# ---------------------------------------------------------------------------
+# run_collect
+# ---------------------------------------------------------------------------
+
+
+async def _async_collect(
+    job_id: str,
+    target_host: str,
+    target_user: str,
+    product_profile: str,
+    sudo_password: str | None,
+) -> None:
+    secret = wrap_password(sudo_password)
+    engine, SessionLocal = _make_session()
+    try:
+        profile_file = _profile_path(product_profile)
+        with profile_file.open() as f:
+            profile: dict = json.load(f)
+
+        raw_dir = _nfs_raw_dir(job_id)
+        phase_cfg = profile.get("phases", {}).get("collect", {})
+        scripts: list[str] = phase_cfg.get("scripts", [])
+        phase_env: dict[str, str] = dict(phase_cfg.get("env", {}))
+        if secret:
+            phase_env["SUDO_PASSWORD"] = secret.get_secret_value()
+
+        if scripts:
+            connect_kwargs = _build_connect_kwargs(target_host, target_user)
+            log.info("collect.ssh_connect", host=target_host)
+            try:
+                async with asyncssh.connect(**connect_kwargs) as conn:
+                    remote_tmp = f"/tmp/inspection_{job_id[:8]}"
+                    await conn.run(f"mkdir -p {remote_tmp}", check=True)
+                    await _run_phase_scripts(
+                        conn,
+                        job_id,
+                        "collect",
+                        scripts,
+                        phase_env,
+                        int(phase_cfg.get("timeout", 120)),
+                        raw_dir,
+                        SessionLocal,
+                    )
+                    await conn.run(f"rm -rf {remote_tmp}", check=False)
+            except Exception as exc:
+                # collect 실패는 non-fatal — 로그 수집 실패로 검수 결과에 영향 없음
+                log.warning("collect.failed_warn", error=str(exc))
+
+        log.info("collect.done", job_id=job_id)
+
+        # collect 완료 → validate dispatch
+        async with SessionLocal() as session:
+            result_path = str(_nfs_raw_dir(job_id))
+            await _update_job(session, job_id, status="validating", result_path=result_path)
+        await publish_job_status(job_id, "validating")
+
+        from workers.validate import validate_results
+
+        validate_results.apply_async(
+            args=[job_id],
+            kwargs={
+                "sudo_password": sudo_password,
+                "target_host": target_host,
+                "target_user": target_user,
+                "product_profile": product_profile,
+            },
+            queue="q_validate",
+        )
+    finally:
+        await engine.dispose()
+
+
+@app.task(
+    bind=True,
+    queue="q_inspect",
+    acks_late=True,
+    max_retries=1,
+    default_retry_delay=20,
+    name="workers.inspect.run_collect",
+)
+def run_collect(
+    self,
+    job_id: str,
+    target_host: str,
+    target_user: str,
+    product_profile: str,
+    sudo_password: str | None = None,
+) -> dict:
+    log.info("collect.start", job_id=job_id)
+    try:
+        asyncio.run(
+            _async_collect(job_id, target_host, target_user, product_profile, sudo_password)
+        )
+        return {"job_id": job_id, "phase": "collect", "result": "ok"}
+    except asyncssh.DisconnectError as exc:
+        raise self.retry(exc=exc)
+    except Exception as exc:
+        log.error("collect.unexpected_error", error=str(exc))
+        asyncio.run(_mark_failed(job_id, str(exc)))
+        _dispatch_cleanup(job_id, target_host, target_user, product_profile, sudo_password)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -635,7 +727,9 @@ def run_cleanup(
         # cleanup 실패는 on_failure=warn이 내부에서 처리됨
         # 이 경로는 예상 밖 오류
         log.error("cleanup.unexpected_error", error=str(exc))
-        asyncio.run(_mark_report_trigger(job_id))
+        # 재시도 소진 후에만 report 트리거 — 재시도 성공 시 중복 dispatch 방지
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_report_trigger(job_id))
         raise self.retry(exc=exc)
 
 
