@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, patch
 
 from workers.sw_planner import (
     _check_compat,
+    _extract_version,
+    _is_alias_boundary,
     _parse_account,
     _parse_storage_mount,
     _parse_sw_install,
@@ -25,9 +27,29 @@ def test_parse_empty_returns_empty():
     assert parse("") == []
 
 
-def test_parse_non_bullet_lines_ignored():
-    md = "## 요구사항\nCUDA 12.4\n\n요약 텍스트"
-    assert parse(md) == []
+def test_parse_non_bullet_lines_included():
+    """P1: 불릿 없는 일반 라인도 요구사항으로 인식."""
+    items = parse("nvidia-driver-560\ncuda-toolkit-12-6\ntorch==2.4.0")
+    assert len(items) == 3
+    assert items[0]["name"] == "nvidia_driver"
+    assert items[1]["name"] == "cuda"
+    assert items[2]["name"] == "torch"
+
+
+def test_parse_markdown_headers_excluded():
+    """마크다운 헤더(#)와 구분자(---)는 제외."""
+    md = "## 요구사항\n---\n- CUDA 12.4"
+    items = parse(md)
+    assert len(items) == 1
+    assert items[0]["name"] == "cuda"
+
+
+def test_parse_code_block_markers_excluded():
+    """코드블록 마커(```)는 제외."""
+    md = "```\nnvidia-driver-550\n```"
+    items = parse(md)
+    assert len(items) == 1
+    assert items[0]["name"] == "nvidia_driver"
 
 
 def test_parse_sw_install_cuda():
@@ -166,6 +188,101 @@ def test_parse_sw_install_python_version():
     result = _parse_sw_install("python 3.11")
     assert result["name"] == "python"
     assert result["version"] == "3.11"
+
+
+# ---------------------------------------------------------------------------
+# _extract_version — 버전 추출 (P1 #2)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_version_space_separated():
+    assert _extract_version("CUDA 12.4") == "12.4"
+    assert _extract_version("nvidia-driver 550") == "550"
+
+
+def test_extract_version_pip_style_double_eq():
+    """P1: torch==2.4.0 스타일 버전 추출."""
+    assert _extract_version("torch==2.4.0") == "2.4.0"
+    assert _extract_version("PyTorch==2.3") == "2.3"
+
+
+def test_extract_version_pip_style_gte():
+    assert _extract_version("cuda>=12.4") == "12.4"
+
+
+def test_extract_version_hyphen_trailing_single():
+    """P1: nvidia-driver-560 → '560'."""
+    assert _extract_version("nvidia-driver-560") == "560"
+
+
+def test_extract_version_hyphen_trailing_multipart():
+    """P1: cuda-toolkit-12-6 → '12.6' (하이픈을 점으로 변환)."""
+    assert _extract_version("cuda-toolkit-12-6") == "12.6"
+
+
+def test_extract_version_no_version():
+    assert _extract_version("docker") is None
+    assert _extract_version("vim") is None
+
+
+# ---------------------------------------------------------------------------
+# _is_alias_boundary — alias 경계 확인 (P2)
+# ---------------------------------------------------------------------------
+
+
+def test_alias_boundary_end_of_string():
+    assert _is_alias_boundary("docker", 6) is True
+
+
+def test_alias_boundary_space():
+    assert _is_alias_boundary("docker 20.10", 6) is True
+
+
+def test_alias_boundary_pip_delimiter():
+    assert _is_alias_boundary("torch==2.4.0", 5) is True
+
+
+def test_alias_boundary_version_hyphen():
+    """하이픈 뒤 숫자 → 버전 접미어로 인식."""
+    assert _is_alias_boundary("nvidia-driver-560", 13) is True
+
+
+def test_alias_boundary_non_digit_hyphen_not_boundary():
+    """하이픈 뒤 문자 → 경계 아님 (예: docker-compose)."""
+    assert _is_alias_boundary("docker-compose", 6) is False
+
+
+# ---------------------------------------------------------------------------
+# _parse_sw_install — P1 #2 + P2 통합
+# ---------------------------------------------------------------------------
+
+
+def test_parse_sw_install_pip_style():
+    """P1: torch==2.4.0 → name=torch, version=2.4.0."""
+    result = _parse_sw_install("torch==2.4.0")
+    assert result["name"] == "torch"
+    assert result["version"] == "2.4.0"
+
+
+def test_parse_sw_install_hyphen_version_driver():
+    """P1: nvidia-driver-560 → name=nvidia_driver, version=560."""
+    result = _parse_sw_install("nvidia-driver-560")
+    assert result["name"] == "nvidia_driver"
+    assert result["version"] == "560"
+
+
+def test_parse_sw_install_hyphen_version_cuda_toolkit():
+    """P1: cuda-toolkit-12-6 → name=cuda, version=12.6."""
+    result = _parse_sw_install("cuda-toolkit-12-6")
+    assert result["name"] == "cuda"
+    assert result["version"] == "12.6"
+
+
+def test_parse_sw_install_docker_compose_not_remapped():
+    """P2: docker-compose는 'docker' alias로 오매핑되지 않음."""
+    result = _parse_sw_install("docker-compose")
+    assert result["name"] != "docker"
+    assert result["name"] == "docker_compose"
 
 
 # ---------------------------------------------------------------------------

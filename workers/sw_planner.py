@@ -61,6 +61,7 @@ _SW_ALIASES: dict[str, str] = {
     "nvidia container toolkit": "docker_container_toolkit",
     "nvidia-driver": "nvidia_driver",
     "nvidia driver": "nvidia_driver",
+    "cuda-toolkit": "cuda",
     "cuda toolkit": "cuda",
     "pytorch": "torch",
     "miniconda": "miniconda",
@@ -104,12 +105,25 @@ def _load_compat_matrix() -> dict:
 
 
 def _parse_bullet_lines(md_text: str) -> list[str]:
-    """마크다운 불릿 라인(- 또는 *)만 추출."""
+    """
+    요구사항 라인 추출.
+    - 마크다운 불릿(- / *) 지원
+    - 불릿 없는 일반 라인도 허용 (예: 'torch==2.4.0', 'nvidia-driver-560')
+    - 마크다운 헤더(#), 코드블록(```), 구분자(---, ===) 제외
+    """
     lines = []
     for line in md_text.splitlines():
         stripped = line.strip()
-        if len(stripped) > 2 and stripped[0] in ("-", "*") and stripped[1] in (" ", "\t"):
-            lines.append(stripped[2:].strip())
+        if not stripped:
+            continue
+        if stripped.startswith(("#", "```", "---", "===")):
+            continue
+        if len(stripped) > 1 and stripped[0] in ("-", "*") and stripped[1] in (" ", "\t"):
+            content = stripped[2:].strip()
+            if content:
+                lines.append(content)
+        else:
+            lines.append(stripped)
     return lines
 
 
@@ -163,33 +177,73 @@ def _parse_storage_mount(line: str) -> dict:
     }
 
 
+def _is_alias_boundary(s: str, pos: int) -> bool:
+    """alias 끝 위치(pos)가 경계인지 확인: 문자열 끝·공백·구분자·버전 하이픈."""
+    if pos >= len(s):
+        return True
+    ch = s[pos]
+    if ch in (" ", "\t", "=", ">", "<", "~", "!"):
+        return True
+    # 하이픈 뒤에 숫자가 오면 버전 접미어 (예: -560, -12-6)
+    if ch == "-" and pos + 1 < len(s) and s[pos + 1].isdigit():
+        return True
+    return False
+
+
+def _extract_version(line: str) -> str | None:
+    """
+    버전 추출. 우선순위:
+    1. pip/conda 스타일 — torch==2.4.0, cuda>=12.4
+    2. 공백 구분 순수 숫자 토큰 — 'CUDA 12.4', 'nvidia-driver 550'
+    3. 하이픈 구분 후미 버전 — cuda-toolkit-12-6 → '12.6', nvidia-driver-560 → '560'
+    """
+    # 1. pip/conda 스타일 (==, >=, <=, ~=, !=, =)
+    m = re.search(r"[=!<>~]=?\s*(\d[\d.]*)", line)
+    if m:
+        return m.group(1)
+
+    # 2. 공백으로 구분된 순수 숫자 토큰
+    for token in line.split():
+        if re.match(r"^\d[\d.]*$", token):
+            return token
+
+    # 3. 하이픈 구분 후미 버전 (패키지명-버전 형식)
+    m = re.search(r"-(\d[\d-]*)$", line.lower())
+    if m:
+        return m.group(1).replace("-", ".")
+
+    return None
+
+
 def _parse_sw_install(line: str) -> dict:
-    """'CUDA 12.4', 'nvidia-driver 550', 'docker' 등 파싱."""
+    """
+    'CUDA 12.4', 'nvidia-driver 550', 'torch==2.4.0', 'cuda-toolkit-12-6' 등 파싱.
+
+    P2: alias 매칭 시 경계 문자 확인 — 'docker'가 'docker-compose'로 오매핑되는 문제 방지.
+    """
     lower = line.lower().strip()
 
-    # 긴 alias 우선 매칭 (longest-match)
+    # 긴 alias 우선 매칭 (longest-match + 경계 확인)
     matched_name: str | None = None
     matched_len = 0
     for alias, canonical in _SW_ALIASES.items():
-        if lower.startswith(alias) and len(alias) > matched_len:
+        if (
+            lower.startswith(alias)
+            and len(alias) > matched_len
+            and _is_alias_boundary(lower, len(alias))
+        ):
             matched_name = canonical
             matched_len = len(alias)
 
     if matched_name is None:
-        parts = line.split()
-        matched_name = parts[0].lower().replace("-", "_") if parts else line.lower()
-
-    # 버전 추출: 숫자 시작 토큰 (예: 12.4, 2.3, 570)
-    version: str | None = None
-    for token in line.split():
-        if re.match(r"^\d[\d.]*$", token):
-            version = token
-            break
+        # 알 수 없는 패키지: 첫 토큰에서 버전 구분자 앞까지를 이름으로 사용
+        first = re.split(r"[\s=><~!]", line)[0]
+        matched_name = first.lower().replace("-", "_") if first else line.lower()
 
     return {
         "type": "sw_install",
         "name": matched_name,
-        "version": version,
+        "version": _extract_version(line),
         "agent_required": False,
     }
 
