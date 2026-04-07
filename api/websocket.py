@@ -26,7 +26,7 @@ from config.settings import settings
 log = structlog.get_logger(__name__)
 router = APIRouter()
 
-_TERMINAL = frozenset({"pass", "fail", "error"})
+_TERMINAL = frozenset({"pass", "failed", "rejected", "report_failed", "fail", "error"})
 
 
 @router.websocket("/jobs/{job_id}")
