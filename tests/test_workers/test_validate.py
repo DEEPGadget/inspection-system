@@ -1,229 +1,391 @@
 """
-Validate Worker 유닛 테스트.
-Claude API와 DB는 mock — 프롬프트 구성, 파싱, 상태 전이 로직 검증.
+Validate Worker v2 유닛 테스트.
+DB·Claude API·NFS는 mock — Rule Validator 연동, Verify Agent fallback, 상태 전이 검증.
 """
 
 import json
 import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from workers.validate import _build_user_message, _parse_claude_response
+from workers.validate import _load_rules, _save_verdict_to_nfs
+
+
+# ---------------------------------------------------------------------------
+# 공통 픽스처
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
 def mock_publish(monkeypatch):
-    """publish_job_status는 Redis 연결이 필요 — 모든 테스트에서 mock."""
+    """publish_job_status — Redis 불필요."""
     monkeypatch.setattr("workers.validate.publish_job_status", AsyncMock())
 
 
-# ---------------------------------------------------------------------------
-# 프롬프트 구성
-# ---------------------------------------------------------------------------
+@pytest.fixture
+def mock_session(monkeypatch):
+    """_make_session → 가짜 엔진 + 세션팩토리."""
+    sess = AsyncMock()
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=sess)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    factory = MagicMock(return_value=cm)
+    engine = AsyncMock()
+    monkeypatch.setattr("workers.validate._make_session", lambda: (engine, factory))
+    return sess
 
 
-def test_build_user_message_contains_host():
-    msg = _build_user_message("job-1", "10.0.0.1", "gpu_server", [])
-    assert "10.0.0.1" in msg
-    assert "gpu_server" in msg
+def _mock_job(profile="gpu_server", expected_specs=None):
+    return MagicMock(
+        target_host="10.0.0.1",
+        target_user="root",
+        product_profile=profile,
+        expected_specs=expected_specs,
+    )
 
 
-def test_build_user_message_contains_results():
-    results = [{"check": "sw_gpu", "status": "pass", "detail": "8x A100", "raw": {}}]
-    msg = _build_user_message("job-1", "10.0.0.1", "gpu_server", results)
-    assert "sw_gpu" in msg
-    assert "8x A100" in msg
+def _mock_cr(check_name: str, detail: str, status: str = "pass"):
+    """최소 CheckResult 목."""
+    cr = MagicMock()
+    cr.check_name = check_name
+    cr.detail = detail
+    cr.status = status
+    cr.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    return cr
 
 
-# ---------------------------------------------------------------------------
-# Claude 응답 파싱
-# ---------------------------------------------------------------------------
-
-VALID_RESPONSE = json.dumps(
-    {
-        "overall": "pass",
-        "fail_reasons": [],
-        "warn_reasons": [],
-        "checks": [
-            {"name": "sw_gpu", "verdict": "pass", "reason": "8x A100, 45°C, no ECC errors"},
-            {
-                "name": "sw_power_mgmt",
-                "verdict": "pass",
-                "reason": "sleep.target masked, governor=performance",
-            },
-        ],
-        "summary": "모든 검사를 통과했습니다.",
-    }
-)
-
-FAIL_RESPONSE = json.dumps(
-    {
-        "overall": "fail",
-        "fail_reasons": ["GPU 온도 92°C > 87°C", "sleep.target not masked"],
-        "warn_reasons": [],
-        "checks": [
-            {"name": "sw_gpu", "verdict": "fail", "reason": "온도 92°C 초과"},
-            {"name": "sw_power_mgmt", "verdict": "fail", "reason": "sleep.target masked 아님"},
-        ],
-        "summary": "GPU 과열 및 전원 관리 설정 불량으로 불합격.",
-    }
-)
-
-
-def test_parse_valid_json():
-    result = _parse_claude_response(VALID_RESPONSE)
-    assert result["overall"] == "pass"
-    assert len(result["checks"]) == 2
-    assert result["checks"][0]["name"] == "sw_gpu"
-
-
-def test_parse_fail_response():
-    result = _parse_claude_response(FAIL_RESPONSE)
-    assert result["overall"] == "fail"
-    assert len(result["fail_reasons"]) == 2
-
-
-def test_parse_markdown_codeblock():
-    wrapped = f"```json\n{VALID_RESPONSE}\n```"
-    result = _parse_claude_response(wrapped)
-    assert result["overall"] == "pass"
-
-
-def test_parse_markdown_codeblock_no_lang():
-    wrapped = f"```\n{VALID_RESPONSE}\n```"
-    result = _parse_claude_response(wrapped)
-    assert result["overall"] == "pass"
-
-
-def test_parse_json_embedded_in_text():
-    """JSON 앞뒤에 텍스트가 있는 경우 추출."""
-    text = f"판정 결과입니다:\n{VALID_RESPONSE}\n이상입니다."
-    result = _parse_claude_response(text)
-    assert result["overall"] == "pass"
-
-
-def test_parse_invalid_returns_error():
-    result = _parse_claude_response("이것은 JSON이 아닙니다.")
-    assert result["overall"] == "error"
-    assert "fail_reasons" in result
-    assert len(result["fail_reasons"]) > 0
-
-
-def test_parse_empty_string():
-    result = _parse_claude_response("")
-    assert result["overall"] == "error"
-
-
-# ---------------------------------------------------------------------------
-# 상태 전이 로직 (전체 흐름 mock)
-# ---------------------------------------------------------------------------
-
-MOCK_CHECK_RESULTS = [
-    MagicMock(
-        check_name="sw_gpu",
-        status="pass",
-        detail="gpu_count=8|gpu_max_temp_c=45",
-        raw_output={"check": "sw_gpu", "status": "pass", "detail": "gpu_count=8"},
-    ),
-    MagicMock(
-        check_name="sw_power_mgmt",
-        status="fail",
-        detail="FAIL:sleep_target_not_masked",
-        raw_output={"check": "sw_power_mgmt", "status": "fail", "detail": "sleep.target=enabled"},
-    ),
+MOCK_CRS = [
+    _mock_cr("sw_gpu_sw", "gpu_max_temp_c=80"),
+    _mock_cr("sw_power_mgmt", "sleep_target=masked"),
 ]
 
 
-@pytest.mark.asyncio
-async def test_async_validate_pass_triggers_cleanup(tmp_path, monkeypatch):
-    """overall=pass 시 run_cleanup.apply_async가 호출되는지 확인."""
-    job_id = str(uuid.uuid4())
+# ---------------------------------------------------------------------------
+# _load_rules
+# ---------------------------------------------------------------------------
+
+
+def test_load_rules_valid(tmp_path, monkeypatch):
+    monkeypatch.setattr("workers.validate._PROFILES_DIR", tmp_path)
+    profile_data = {
+        "validation": {
+            "rules": [{"check": "sw_gpu_sw", "metric": "gpu_max_temp_c", "fail_above": 87}],
+            "agent_trigger": {"warn_count_threshold": 2},
+        }
+    }
+    (tmp_path / "gpu_server.json").write_text(json.dumps(profile_data))
+    rules, threshold = _load_rules("gpu_server")
+    assert len(rules) == 1
+    assert threshold == 2
+
+
+def test_load_rules_file_not_found(tmp_path, monkeypatch):
+    """프로파일 파일 없으면 빈 rules, 기본 threshold=3 반환."""
+    monkeypatch.setattr("workers.validate._PROFILES_DIR", tmp_path)
+    rules, threshold = _load_rules("nonexistent")
+    assert rules == []
+    assert threshold == 3
+
+
+def test_load_rules_invalid_json(tmp_path, monkeypatch):
+    monkeypatch.setattr("workers.validate._PROFILES_DIR", tmp_path)
+    (tmp_path / "bad.json").write_text("not json")
+    rules, threshold = _load_rules("bad")
+    assert rules == []
+    assert threshold == 3
+
+
+# ---------------------------------------------------------------------------
+# _save_verdict_to_nfs
+# ---------------------------------------------------------------------------
+
+
+def test_save_verdict_creates_file(tmp_path, monkeypatch):
     monkeypatch.setattr("workers.validate.settings.nfs_base_path", str(tmp_path))
-    monkeypatch.setattr("workers.validate.settings.anthropic_api_key", "test-key")
+    job_id = str(uuid.uuid4())
+    rv_result = {"fail_items": [], "warn_items": [], "warn_count": 0}
+    _save_verdict_to_nfs(job_id, rv_result, None, "pass")
 
-    mock_job = MagicMock(
-        target_host="10.0.0.1",
-        target_user="root",
-        product_profile="gpu_server",
-    )
-
-    mock_cleanup = MagicMock()
-    mock_cleanup.apply_async = MagicMock()
-
-    with (
-        patch("workers.validate._make_session", return_value=(AsyncMock(), MagicMock())),
-        patch(
-            "workers.validate._load_job_and_results",
-            AsyncMock(return_value=(mock_job, MOCK_CHECK_RESULTS)),
-        ),
-        patch("workers.validate._update_check_verdicts", AsyncMock()),
-        patch("workers.validate._update_job_status", AsyncMock()),
-        patch("workers.validate._call_claude", AsyncMock(return_value=VALID_RESPONSE)),
-        patch.dict("sys.modules", {"workers.inspect": MagicMock(run_cleanup=mock_cleanup)}),
-    ):
-        from workers.validate import _async_validate
-
-        await _async_validate(job_id)
-
-    # NFS verdict 파일 생성 확인
     verdict_file = tmp_path / "results" / job_id / "claude_verdict.json"
     assert verdict_file.exists()
     data = json.loads(verdict_file.read_text())
-    assert data["overall"] == "pass"
-    mock_cleanup.apply_async.assert_called_once()
+    assert data["verdict"] == "pass"
+    assert data["agent_verdict"] is None
+    assert "validated_at" in data
 
 
-@pytest.mark.asyncio
-async def test_async_validate_fail_triggers_cleanup(tmp_path, monkeypatch):
-    """overall=fail 시 run_cleanup.apply_async가 호출되는지 확인."""
-    job_id = str(uuid.uuid4())
+def test_save_verdict_with_agent_verdict(tmp_path, monkeypatch):
     monkeypatch.setattr("workers.validate.settings.nfs_base_path", str(tmp_path))
-    monkeypatch.setattr("workers.validate.settings.anthropic_api_key", "test-key")
+    job_id = str(uuid.uuid4())
+    rv_result = {
+        "fail_items": [],
+        "warn_items": [{"check": "sw_gpu_sw", "metric": "gpu_max_temp_c"}],
+        "warn_count": 1,
+    }
+    agent_v = {"verdict": "reject", "reason": "복합 경계값으로 불합격"}
+    _save_verdict_to_nfs(job_id, rv_result, agent_v, "rejected")
 
-    mock_job = MagicMock(
-        target_host="10.0.0.1",
-        target_user="root",
-        product_profile="gpu_server",
-    )
+    data = json.loads((tmp_path / "results" / job_id / "claude_verdict.json").read_text())
+    assert data["verdict"] == "rejected"
+    assert data["agent_verdict"]["verdict"] == "reject"
+    assert data["warn_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# _async_validate — pass 플로우
+# ---------------------------------------------------------------------------
+
+
+async def test_validate_rule_pass_triggers_cleanup(tmp_path, monkeypatch, mock_session):
+    """rule_validator=pass → job.status=cleanup, cleanup 트리거."""
+    monkeypatch.setattr("workers.validate.settings.nfs_base_path", str(tmp_path))
+    job_id = str(uuid.uuid4())
+
     mock_cleanup = MagicMock()
     mock_cleanup.apply_async = MagicMock()
+    mock_update = AsyncMock()
 
     with (
-        patch("workers.validate._make_session", return_value=(AsyncMock(), MagicMock())),
         patch(
             "workers.validate._load_job_and_results",
-            AsyncMock(return_value=(mock_job, MOCK_CHECK_RESULTS)),
+            AsyncMock(return_value=(_mock_job(), MOCK_CRS)),
         ),
-        patch("workers.validate._update_check_verdicts", AsyncMock()),
-        patch("workers.validate._update_job_status", AsyncMock()),
-        patch("workers.validate._call_claude", AsyncMock(return_value=FAIL_RESPONSE)),
+        patch("workers.validate._update_job_status", mock_update),
+        patch(
+            "workers.validate.rule_evaluate",
+            return_value={"verdict": "pass", "fail_items": [], "warn_items": [], "warn_count": 0},
+        ),
         patch.dict("sys.modules", {"workers.inspect": MagicMock(run_cleanup=mock_cleanup)}),
     ):
         from workers.validate import _async_validate
 
-        await _async_validate(job_id)
+        await _async_validate(job_id, sudo_password=None)
 
+    # status = cleanup
+    mock_update.assert_called_once()
+    assert mock_update.call_args[0][2] == "cleanup"
+    # NFS 파일 생성
+    verdict_file = tmp_path / "results" / job_id / "claude_verdict.json"
+    assert verdict_file.exists()
+    assert json.loads(verdict_file.read_text())["verdict"] == "pass"
+    # cleanup 트리거
     mock_cleanup.apply_async.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_async_validate_no_results_marks_error(monkeypatch):
-    """CheckResult 없으면 Job을 error로 마킹."""
-    job_id = str(uuid.uuid4())
-    mock_job = MagicMock(target_host="10.0.0.1", product_profile="gpu_server")
+# ---------------------------------------------------------------------------
+# _async_validate — fail 플로우
+# ---------------------------------------------------------------------------
 
-    update_status = AsyncMock()
+
+async def test_validate_rule_fail_triggers_cleanup(tmp_path, monkeypatch, mock_session):
+    """rule_validator=fail → job.status=failed, cleanup 트리거."""
+    monkeypatch.setattr("workers.validate.settings.nfs_base_path", str(tmp_path))
+    job_id = str(uuid.uuid4())
+
+    mock_cleanup = MagicMock()
+    mock_cleanup.apply_async = MagicMock()
+    mock_update = AsyncMock()
+
+    fail_items = [
+        {
+            "check": "sw_gpu_sw",
+            "metric": "gpu_max_temp_c",
+            "value": "92",
+            "rule": "fail_above",
+            "threshold": 87,
+        }
+    ]
     with (
         patch(
-            "workers.validate._load_job_and_results", AsyncMock(return_value=(mock_job, []))
-        ),  # 빈 결과
-        patch("workers.validate._update_job_status", update_status),
+            "workers.validate._load_job_and_results",
+            AsyncMock(return_value=(_mock_job(), MOCK_CRS)),
+        ),
+        patch("workers.validate._update_job_status", mock_update),
+        patch(
+            "workers.validate.rule_evaluate",
+            return_value={
+                "verdict": "fail",
+                "fail_items": fail_items,
+                "warn_items": [],
+                "warn_count": 0,
+            },
+        ),
+        patch.dict("sys.modules", {"workers.inspect": MagicMock(run_cleanup=mock_cleanup)}),
     ):
         from workers.validate import _async_validate
 
-        await _async_validate(job_id)
+        await _async_validate(job_id, sudo_password=None)
 
-    update_status.assert_called_once()
-    args = update_status.call_args
-    assert args[0][2] == "error"  # status 인자
+    assert mock_update.call_args[0][2] == "failed"
+    mock_cleanup.apply_async.assert_called_once()
+    data = json.loads((tmp_path / "results" / job_id / "claude_verdict.json").read_text())
+    assert data["verdict"] == "fail"
+    assert len(data["fail_items"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# _async_validate — agent_required → pass
+# ---------------------------------------------------------------------------
+
+
+async def test_validate_agent_required_pass(tmp_path, monkeypatch, mock_session):
+    """agent_required + Verify Agent pass → job.status=cleanup."""
+    monkeypatch.setattr("workers.validate.settings.nfs_base_path", str(tmp_path))
+    job_id = str(uuid.uuid4())
+
+    mock_cleanup = MagicMock()
+    mock_cleanup.apply_async = MagicMock()
+    mock_update = AsyncMock()
+    warn_items = [
+        {
+            "check": "sw_gpu_sw",
+            "metric": "gpu_max_temp_c",
+            "value": "80",
+            "rule": "agent_zone_above",
+            "threshold": 75,
+        }
+    ]
+
+    with (
+        patch(
+            "workers.validate._load_job_and_results",
+            AsyncMock(return_value=(_mock_job(), MOCK_CRS)),
+        ),
+        patch("workers.validate._update_job_status", mock_update),
+        patch(
+            "workers.validate.rule_evaluate",
+            return_value={
+                "verdict": "agent_required",
+                "fail_items": [],
+                "warn_items": warn_items,
+                "warn_count": 1,
+            },
+        ),
+        patch(
+            "workers.validate.call_verify_agent",
+            AsyncMock(return_value={"verdict": "pass", "reason": "경계값이나 종합 정상"}),
+        ),
+        patch.dict("sys.modules", {"workers.inspect": MagicMock(run_cleanup=mock_cleanup)}),
+    ):
+        from workers.validate import _async_validate
+
+        await _async_validate(job_id, sudo_password=None)
+
+    assert mock_update.call_args[0][2] == "cleanup"
+    mock_cleanup.apply_async.assert_called_once()
+    data = json.loads((tmp_path / "results" / job_id / "claude_verdict.json").read_text())
+    assert data["verdict"] == "pass"
+    assert data["agent_verdict"]["verdict"] == "pass"
+
+
+# ---------------------------------------------------------------------------
+# _async_validate — agent_required → reject
+# ---------------------------------------------------------------------------
+
+
+async def test_validate_agent_required_reject(tmp_path, monkeypatch, mock_session):
+    """agent_required + Verify Agent reject → job.status=rejected, cleanup 트리거."""
+    monkeypatch.setattr("workers.validate.settings.nfs_base_path", str(tmp_path))
+    job_id = str(uuid.uuid4())
+
+    mock_cleanup = MagicMock()
+    mock_cleanup.apply_async = MagicMock()
+    mock_update = AsyncMock()
+    warn_items = [
+        {
+            "check": "sw_gpu_sw",
+            "metric": "gpu_max_temp_c",
+            "value": "80",
+            "rule": "agent_zone_above",
+            "threshold": 75,
+        }
+    ]
+
+    with (
+        patch(
+            "workers.validate._load_job_and_results",
+            AsyncMock(return_value=(_mock_job(), MOCK_CRS)),
+        ),
+        patch("workers.validate._update_job_status", mock_update),
+        patch(
+            "workers.validate.rule_evaluate",
+            return_value={
+                "verdict": "agent_required",
+                "fail_items": [],
+                "warn_items": warn_items,
+                "warn_count": 1,
+            },
+        ),
+        patch(
+            "workers.validate.call_verify_agent",
+            AsyncMock(return_value={"verdict": "reject", "reason": "복합 경계값으로 불합격"}),
+        ),
+        patch.dict("sys.modules", {"workers.inspect": MagicMock(run_cleanup=mock_cleanup)}),
+    ):
+        from workers.validate import _async_validate
+
+        await _async_validate(job_id, sudo_password=None)
+
+    assert mock_update.call_args[0][2] == "rejected"
+    # cleanup은 rejected여도 실행
+    mock_cleanup.apply_async.assert_called_once()
+    data = json.loads((tmp_path / "results" / job_id / "claude_verdict.json").read_text())
+    assert data["verdict"] == "rejected"
+    assert data["agent_verdict"]["verdict"] == "reject"
+
+
+# ---------------------------------------------------------------------------
+# _async_validate — edge cases
+# ---------------------------------------------------------------------------
+
+
+async def test_validate_no_results_marks_failed(monkeypatch, mock_session):
+    """CheckResult 없으면 job.status=failed."""
+    job_id = str(uuid.uuid4())
+    mock_update = AsyncMock()
+
+    with (
+        patch(
+            "workers.validate._load_job_and_results",
+            AsyncMock(return_value=(_mock_job(), [])),
+        ),
+        patch("workers.validate._update_job_status", mock_update),
+    ):
+        from workers.validate import _async_validate
+
+        await _async_validate(job_id, sudo_password=None)
+
+    assert mock_update.call_args[0][2] == "failed"
+
+
+async def test_validate_expected_specs_passed_to_rule_evaluate(tmp_path, monkeypatch, mock_session):
+    """job.expected_specs가 rule_evaluate에 전달되는지 확인."""
+    monkeypatch.setattr("workers.validate.settings.nfs_base_path", str(tmp_path))
+    job_id = str(uuid.uuid4())
+    mock_cleanup = MagicMock()
+    mock_cleanup.apply_async = MagicMock()
+
+    mock_evaluate = MagicMock(
+        return_value={"verdict": "pass", "fail_items": [], "warn_items": [], "warn_count": 0}
+    )
+    expected = {"expected_gpu_count": 8}
+
+    with (
+        patch(
+            "workers.validate._load_job_and_results",
+            AsyncMock(return_value=(_mock_job(expected_specs=expected), MOCK_CRS)),
+        ),
+        patch("workers.validate._update_job_status", AsyncMock()),
+        patch("workers.validate.rule_evaluate", mock_evaluate),
+        patch.dict("sys.modules", {"workers.inspect": MagicMock(run_cleanup=mock_cleanup)}),
+    ):
+        from workers.validate import _async_validate
+
+        await _async_validate(job_id, sudo_password=None)
+
+    # rule_evaluate 두 번째 인자가 check_results, 세 번째가 expected_specs
+    call_kwargs = mock_evaluate.call_args
+    assert call_kwargs[0][2] == expected

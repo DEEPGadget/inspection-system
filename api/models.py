@@ -65,6 +65,7 @@ class Job(Base):
     target_user: Mapped[str] = mapped_column(String(64), nullable=False, default="root")
     product_profile: Mapped[str] = mapped_column(String(128), nullable=False)
     sw_requirements: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expected_specs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     result_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
