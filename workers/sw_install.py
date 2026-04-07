@@ -1028,6 +1028,10 @@ async def _async_sw_install(
         items = _sort_items(plan["items"])
         pre_items, post_items = _split_items_by_reboot(items)
 
+        # build_plan()이 이미 agent를 한 번 호출한 결과를 재사용.
+        # 루프에서 agent_required 항목마다 재호출하지 않는다.
+        agent_plan_steps: list[dict] = (plan.get("agent_plan") or {}).get("plan", [])
+
         raw_dir = _nfs_sw_dir(job_id)
         raw_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1080,22 +1084,28 @@ async def _async_sw_install(
                     None,
                 )
 
+                # pre-reboot agent_required 항목: agent plan을 한 번만 실행하고 결과 재사용
+                pre_agent_items = [
+                    i
+                    for i in pre_items
+                    if i.get("type") == "sw_install" and i.get("agent_required")
+                ]
+                pre_agent_ok, pre_agent_detail = False, ""
+                if pre_agent_items:
+                    pre_agent_ok, pre_agent_detail = await _execute_agent_plan(
+                        conn, secret, agent_plan_steps
+                    )
+
                 # pre-reboot 항목 설치
                 for item in pre_items:
                     item_type = item.get("type")
 
                     if item_type == "sw_install":
                         if item.get("agent_required"):
-                            from workers.agent_gateway import call_sw_planner_agent
-
-                            agent_r = await call_sw_planner_agent(
-                                job_id=job_id, sw_requirements=sw_requirements
-                            )
-                            ok, detail = await _execute_agent_plan(
-                                conn, secret, agent_r.get("plan", [])
-                            )
                             result_entry = _make_result(
-                                item.get("name", ""), "pass" if ok else "fail", detail
+                                item.get("name", ""),
+                                "pass" if pre_agent_ok else "fail",
+                                pre_agent_detail,
                             )
                         else:
                             result_entry = await _install_sw_item(
@@ -1165,20 +1175,26 @@ async def _async_sw_install(
                 if not driver_ok:
                     failed_deps.add("nvidia_driver")
 
+                # post-reboot agent_required 항목: agent plan을 한 번만 실행하고 결과 재사용
+                post_agent_items = [
+                    i
+                    for i in post_items
+                    if i.get("type") == "sw_install" and i.get("agent_required")
+                ]
+                post_agent_ok, post_agent_detail = False, ""
+                if post_agent_items:
+                    post_agent_ok, post_agent_detail = await _execute_agent_plan(
+                        new_conn, secret, agent_plan_steps
+                    )
+
                 for item in post_items:
                     if item.get("type") != "sw_install":
                         continue
                     if item.get("agent_required"):
-                        from workers.agent_gateway import call_sw_planner_agent
-
-                        agent_r = await call_sw_planner_agent(
-                            job_id=job_id, sw_requirements=sw_requirements
-                        )
-                        ok, detail = await _execute_agent_plan(
-                            new_conn, secret, agent_r.get("plan", [])
-                        )
                         result_entry = _make_result(
-                            item.get("name", ""), "pass" if ok else "fail", detail
+                            item.get("name", ""),
+                            "pass" if post_agent_ok else "fail",
+                            post_agent_detail,
                         )
                     else:
                         result_entry = await _install_sw_item(

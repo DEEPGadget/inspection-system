@@ -52,6 +52,21 @@ services:
       - ./checks:/srv/inspection/checks:ro
       - ssh_keys:/etc/inspection/ssh_keys:ro
 
+  worker_sw_install:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    command: celery -A workers.app worker -Q q_sw_install -c 2 --loglevel=info
+    env_file: .env
+    depends_on:
+      redis: { condition: service_healthy }
+      db: { condition: service_healthy }
+    volumes:
+      - inspection_results:/srv/inspection/results
+      - inspection_logs:/srv/inspection/logs
+      - ssh_keys:/etc/inspection/ssh_keys:ro
+
   worker_validate:
     build:
       context: .
