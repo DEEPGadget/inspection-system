@@ -345,18 +345,19 @@ async def _async_preflight(
             has_sw_req = bool(job and job.sw_requirements)
 
         if has_sw_req:
-            # C-5 미구현: sw_install 단계 stub — 경고 후 post_install으로 fallthrough
-            log.warning(
-                "preflight.sw_install_stub",
-                job_id=job_id,
-                msg="sw_install not yet implemented (C-5), skipping to post_install",
-            )
+            from workers.sw_install import run_sw_install
 
-        run_post_install.apply_async(
-            args=[job_id, target_host, target_user, product_profile],
-            kwargs={"sudo_password": sudo_password},
-            queue="q_inspect",
-        )
+            run_sw_install.apply_async(
+                args=[job_id, target_host, target_user, product_profile],
+                kwargs={"sudo_password": sudo_password},
+                queue="q_sw_install",
+            )
+        else:
+            run_post_install.apply_async(
+                args=[job_id, target_host, target_user, product_profile],
+                kwargs={"sudo_password": sudo_password},
+                queue="q_inspect",
+            )
         log.info("preflight.done", job_id=job_id)
 
     finally:
