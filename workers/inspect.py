@@ -611,6 +611,8 @@ def run_collect(
         raise self.retry(exc=exc)
     except Exception as exc:
         log.error("collect.unexpected_error", error=str(exc))
+        asyncio.run(_mark_failed(job_id, str(exc)))
+        _dispatch_cleanup(job_id, target_host, target_user, product_profile, sudo_password)
         raise
 
 

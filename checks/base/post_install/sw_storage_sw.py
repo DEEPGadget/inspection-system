@@ -125,6 +125,8 @@ def main():
             status = "fail"
         elif sata_failed_count > 0:
             status = "fail"
+        elif non_nvme_disks and sata_checked_count == 0:
+            status = "warn"
         elif root_used_pct > 80:
             status = "warn"
         elif nvme_wear_high_count > 0:
