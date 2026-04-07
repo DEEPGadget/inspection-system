@@ -197,6 +197,19 @@ def test_collect_script_exists():
     assert p.exists(), "collect/collect_all_logs.py 가 없습니다"
 
 
+def test_script_path_collect():
+    p = _script_path("collect", "collect_all_logs")
+    assert p.name == "collect_all_logs.py"
+    assert "collect" in str(p)
+
+
+def test_gpu_server_profile_collect_scripts():
+    with _profile_path("gpu_server").open() as f:
+        profile = json.load(f)
+    scripts = profile["phases"]["collect"]["scripts"]
+    assert "collect_all_logs" in scripts
+
+
 # ---------------------------------------------------------------------------
 # _async_preflight NFS 파일 생성 확인 (SSH + DB mock)
 # ---------------------------------------------------------------------------

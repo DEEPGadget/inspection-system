@@ -268,13 +268,28 @@ async def _async_generate_report(job_id: str) -> None:
                 "created_at": job.created_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
             }
 
-        # ── 2. NFS에서 Claude 판독 결과 로드 ─────────────────
+        # ── 2. NFS에서 Claude 판독 결과 로드 (없으면 DB에서 합성) ──
         verdict_file = Path(settings.nfs_base_path) / "results" / job_id / "claude_verdict.json"
-        if not verdict_file.exists():
-            raise FileNotFoundError(f"claude_verdict.json not found: {verdict_file}")
-
-        verdict = json.loads(verdict_file.read_text(encoding="utf-8"))
-        overall = verdict.get("overall", "error")
+        if verdict_file.exists():
+            verdict = json.loads(verdict_file.read_text(encoding="utf-8"))
+            overall = verdict.get("overall", "fail")
+        else:
+            # validation이 실행되지 않은 경우 (preflight/post_install 실패 등)
+            # check_results에서 fallback verdict 합성
+            log.warning("report.verdict_missing_fallback", job_id=job_id)
+            fail_reasons = [
+                f"{cr.check_name}: {cr.detail[:120]}" for cr in check_results if cr.status == "fail"
+            ]
+            warn_reasons = [
+                f"{cr.check_name}: {cr.detail[:120]}" for cr in check_results if cr.status == "warn"
+            ]
+            overall = "fail"
+            verdict = {
+                "overall": overall,
+                "fail_reasons": fail_reasons,
+                "warn_reasons": warn_reasons,
+                "summary": "",
+            }
 
         # ── 3. 렌더링 컨텍스트 구성 ───────────────────────────
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")

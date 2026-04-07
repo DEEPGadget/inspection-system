@@ -201,8 +201,8 @@ async def test_async_generate_report_pass_flow(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_async_generate_report_missing_verdict(tmp_path):
-    """claude_verdict.json 없으면 FileNotFoundError 발생."""
+async def test_async_generate_report_missing_verdict_uses_fallback(tmp_path):
+    """claude_verdict.json 없으면 DB check_results에서 fallback verdict 합성 후 리포트 생성."""
     job_id = str(uuid.uuid4())
 
     fake_job = MagicMock()
@@ -213,15 +213,30 @@ async def test_async_generate_report_missing_verdict(tmp_path):
     fake_job.created_at = MagicMock()
     fake_job.created_at.strftime.return_value = "2026-03-25 12:00:00 UTC"
 
+    fail_result = MagicMock()
+    fail_result.check_name = "sw_gpu_hw"
+    fail_result.status = "fail"
+    fail_result.detail = "gpu_count=0"
+    fail_result.claude_verdict = None
+
     with (
         patch("workers.report.settings") as mock_settings,
         patch("workers.report._load_job_and_results", new_callable=AsyncMock) as mock_load,
+        patch("workers.report._save_report_record", new_callable=AsyncMock),
+        patch("workers.report._update_job_status", new_callable=AsyncMock) as mock_update,
+        patch("workers.report.publish_job_status", new_callable=AsyncMock),
+        patch("workers.report._render_pdf"),
+        patch("workers.report._render_xlsx"),
         patch("workers.report._make_session", return_value=(AsyncMock(), MagicMock())),
     ):
         mock_settings.nfs_base_path = str(tmp_path)
-        mock_load.return_value = (fake_job, [])
+        mock_load.return_value = (fake_job, [fail_result])
 
         from workers.report import _async_generate_report
 
-        with pytest.raises(FileNotFoundError):
-            await _async_generate_report(job_id)
+        # verdict 파일 없어도 예외 없이 완료
+        await _async_generate_report(job_id)
+
+    # fallback overall은 "fail" → 최종 status="fail"
+    last_call_args = mock_update.call_args_list[-1]
+    assert last_call_args.args[2] == "fail"
