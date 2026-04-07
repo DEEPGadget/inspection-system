@@ -236,3 +236,45 @@ def test_ws_race_window_terminal_transition():
 
     assert initial["status"] == "validating"
     assert reconciled["status"] == "pass"
+
+
+def test_ws_terminal_failed_job_closes_immediately():
+    """P1 회귀: 'failed' 상태 Job → terminal 인식 후 즉시 close."""
+    job_id = str(uuid.uuid4())
+    fake_job = _make_job(job_id, "failed")
+    mock_factory = _mock_db_session(fake_job)
+
+    with patch("api.websocket.AsyncSessionLocal", mock_factory):
+        with TestClient(app) as client:
+            with client.websocket_connect(f"/ws/jobs/{job_id}") as ws:
+                data = ws.receive_json()
+
+    assert data["status"] == "failed"
+
+
+def test_ws_terminal_rejected_job_closes_immediately():
+    """P1 회귀: 'rejected' 상태 Job → terminal 인식 후 즉시 close."""
+    job_id = str(uuid.uuid4())
+    fake_job = _make_job(job_id, "rejected")
+    mock_factory = _mock_db_session(fake_job)
+
+    with patch("api.websocket.AsyncSessionLocal", mock_factory):
+        with TestClient(app) as client:
+            with client.websocket_connect(f"/ws/jobs/{job_id}") as ws:
+                data = ws.receive_json()
+
+    assert data["status"] == "rejected"
+
+
+def test_ws_terminal_report_failed_job_closes_immediately():
+    """P1 회귀: 'report_failed' 상태 Job → terminal 인식 후 즉시 close."""
+    job_id = str(uuid.uuid4())
+    fake_job = _make_job(job_id, "report_failed")
+    mock_factory = _mock_db_session(fake_job)
+
+    with patch("api.websocket.AsyncSessionLocal", mock_factory):
+        with TestClient(app) as client:
+            with client.websocket_connect(f"/ws/jobs/{job_id}") as ws:
+                data = ws.receive_json()
+
+    assert data["status"] == "report_failed"

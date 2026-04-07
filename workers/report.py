@@ -272,7 +272,7 @@ async def _async_generate_report(job_id: str) -> None:
         verdict_file = Path(settings.nfs_base_path) / "results" / job_id / "claude_verdict.json"
         if verdict_file.exists():
             verdict = json.loads(verdict_file.read_text(encoding="utf-8"))
-            overall = verdict.get("overall", "fail")
+            overall = verdict.get("verdict", "fail")
         else:
             # validation이 실행되지 않은 경우 (preflight/post_install 실패 등)
             # check_results에서 fallback verdict 합성
@@ -329,7 +329,8 @@ async def _async_generate_report(job_id: str) -> None:
             await _save_report_record(session, job_id, str(pdf_path), str(xlsx_path))
 
         # ── 7. Job.status → overall 결과로 확정 ──────────────
-        final_status = "pass" if overall == "pass" else "fail"
+        _verdict_to_status = {"pass": "pass", "fail": "failed", "rejected": "rejected"}
+        final_status = _verdict_to_status.get(overall, "failed")
         async with SessionLocal() as session:
             await _update_job_status(session, job_id, final_status)
         await publish_job_status(job_id, final_status)

@@ -154,11 +154,11 @@ async def test_async_generate_report_pass_flow(tmp_path):
     """pass 흐름: verdict 로드 → 렌더링 → DB 저장 → status=pass."""
     job_id = str(uuid.uuid4())
     verdict = {
-        "overall": "pass",
-        "fail_reasons": [],
-        "warn_reasons": [],
-        "summary": "All good",
-        "checks": [],
+        "verdict": "pass",
+        "fail_items": [],
+        "warn_items": [],
+        "warn_count": 0,
+        "agent_verdict": None,
     }
 
     # NFS verdict 파일 생성
@@ -237,6 +237,96 @@ async def test_async_generate_report_missing_verdict_uses_fallback(tmp_path):
         # verdict 파일 없어도 예외 없이 완료
         await _async_generate_report(job_id)
 
-    # fallback overall은 "fail" → 최종 status="fail"
+    # fallback overall은 "fail" → 최종 status="failed"
     last_call_args = mock_update.call_args_list[-1]
-    assert last_call_args.args[2] == "fail"
+    assert last_call_args.args[2] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_async_generate_report_fail_verdict_sets_status_failed(tmp_path):
+    """P0 회귀: verdict='fail' → job.status='failed' (deprecated 'fail' 아님)."""
+    job_id = str(uuid.uuid4())
+    verdict = {
+        "verdict": "fail",
+        "fail_items": [{"check": "sw_gpu_sw", "metric": "gpu_max_temp_c", "value": "95"}],
+        "warn_items": [],
+        "warn_count": 0,
+        "agent_verdict": None,
+    }
+
+    verdict_dir = tmp_path / "results" / job_id
+    verdict_dir.mkdir(parents=True)
+    (verdict_dir / "claude_verdict.json").write_text(json.dumps(verdict))
+
+    fake_job = MagicMock()
+    fake_job.id = uuid.UUID(job_id)
+    fake_job.target_host = "10.0.0.1"
+    fake_job.target_user = "root"
+    fake_job.product_profile = "gpu_server"
+    fake_job.created_at = MagicMock()
+    fake_job.created_at.strftime.return_value = "2026-03-25 12:00:00 UTC"
+
+    with (
+        patch("workers.report.settings") as mock_settings,
+        patch("workers.report._load_job_and_results", new_callable=AsyncMock) as mock_load,
+        patch("workers.report._save_report_record", new_callable=AsyncMock),
+        patch("workers.report._update_job_status", new_callable=AsyncMock) as mock_update,
+        patch("workers.report.publish_job_status", new_callable=AsyncMock),
+        patch("workers.report._render_pdf"),
+        patch("workers.report._render_xlsx"),
+        patch("workers.report._make_session", return_value=(AsyncMock(), MagicMock())),
+    ):
+        mock_settings.nfs_base_path = str(tmp_path)
+        mock_load.return_value = (fake_job, [])
+
+        from workers.report import _async_generate_report
+
+        await _async_generate_report(job_id)
+
+    last_call_args = mock_update.call_args_list[-1]
+    assert last_call_args.args[2] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_async_generate_report_rejected_verdict_sets_status_rejected(tmp_path):
+    """P0 회귀: verdict='rejected' → job.status='rejected'."""
+    job_id = str(uuid.uuid4())
+    verdict = {
+        "verdict": "rejected",
+        "fail_items": [],
+        "warn_items": [{"check": "sw_gpu_sw", "metric": "gpu_max_temp_c", "value": "80"}],
+        "warn_count": 1,
+        "agent_verdict": {"verdict": "reject", "reason": "복합 경계값"},
+    }
+
+    verdict_dir = tmp_path / "results" / job_id
+    verdict_dir.mkdir(parents=True)
+    (verdict_dir / "claude_verdict.json").write_text(json.dumps(verdict))
+
+    fake_job = MagicMock()
+    fake_job.id = uuid.UUID(job_id)
+    fake_job.target_host = "10.0.0.1"
+    fake_job.target_user = "root"
+    fake_job.product_profile = "gpu_server"
+    fake_job.created_at = MagicMock()
+    fake_job.created_at.strftime.return_value = "2026-03-25 12:00:00 UTC"
+
+    with (
+        patch("workers.report.settings") as mock_settings,
+        patch("workers.report._load_job_and_results", new_callable=AsyncMock) as mock_load,
+        patch("workers.report._save_report_record", new_callable=AsyncMock),
+        patch("workers.report._update_job_status", new_callable=AsyncMock) as mock_update,
+        patch("workers.report.publish_job_status", new_callable=AsyncMock),
+        patch("workers.report._render_pdf"),
+        patch("workers.report._render_xlsx"),
+        patch("workers.report._make_session", return_value=(AsyncMock(), MagicMock())),
+    ):
+        mock_settings.nfs_base_path = str(tmp_path)
+        mock_load.return_value = (fake_job, [])
+
+        from workers.report import _async_generate_report
+
+        await _async_generate_report(job_id)
+
+    last_call_args = mock_update.call_args_list[-1]
+    assert last_call_args.args[2] == "rejected"
