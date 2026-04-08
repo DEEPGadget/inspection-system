@@ -313,6 +313,7 @@ async def _async_preflight(
         driver_version = stress_cfg.get("driver_version", "580")
 
         reboot_needed = False  # GRUB 변경 또는 driver 임시 설치로 인한 재부팅 여부
+        reboot_triggered = False  # _do_reboot 실제 완료 여부 (네트워크 오류 구분용)
         temp_packages: list[str] = []
         success = False
 
@@ -409,13 +410,17 @@ async def _async_preflight(
                     # GRUB + driver 설치를 단일 재부팅으로 통합
                     log.info("preflight.single_reboot.trigger", job_id=job_id)
                     await _do_reboot(conn, secret)
+                    reboot_triggered = True
 
         except asyncssh.DisconnectError:
-            if not reboot_needed:
-                raise  # 예상치 못한 연결 끊김
+            if not reboot_triggered:
+                raise  # 예상치 못한 연결 끊김 (reboot 미발생 상태)
 
         # ── 재부팅 후 세션 2: preflight 스크립트 실행 ────────────────────────
         if reboot_needed:
+            async with SessionLocal() as session:
+                await _update_job(session, job_id, status="rebooting")
+            await publish_job_status(job_id, "rebooting")
             log.info("preflight.reboot.waiting", job_id=job_id)
             new_conn = await _poll_ssh_reconnect(connect_kwargs, timeout=300, interval=10)
             if new_conn is None:
