@@ -152,6 +152,41 @@ async def _apt_install(
     return result.exit_status == 0, (result.stdout or "").strip()
 
 
+async def _verify_packages(
+    conn: asyncssh.SSHClientConnection,
+    packages: list[str],
+) -> tuple[list[str], list[str]]:
+    """패키지별 dpkg -s 로 설치 여부 확인. (installed, missing) 반환."""
+    installed: list[str] = []
+    missing: list[str] = []
+    for pkg in packages:
+        # dpkg -s: 미설치 시 exit≠0 / 설치 시 'Status: install ok installed' 라인 포함
+        result = await conn.run(
+            f"dpkg -s {pkg} 2>/dev/null | grep -q '^Status: install ok installed'",
+            check=False,
+            timeout=15,
+        )
+        if result.exit_status == 0:
+            installed.append(pkg)
+        else:
+            missing.append(pkg)
+    return installed, missing
+
+
+async def _install_and_verify_baseline(
+    conn: asyncssh.SSHClientConnection,
+    packages: list[str],
+    secret: SecretStr,
+    timeout: int = 300,
+) -> tuple[bool, list[str], list[str], str]:
+    """baseline 설치 + 검증. (ok, installed, missing, apt_output_tail) 반환."""
+    _, apt_out = await _apt_install(conn, packages, secret, timeout=timeout)
+    installed, missing = await _verify_packages(conn, packages)
+    # apt 출력 마지막 5줄만 보존 (민감정보 회피 + 컨텍스트)
+    tail = " // ".join([line for line in (apt_out or "").splitlines() if line.strip()][-5:])
+    return (len(missing) == 0), installed, missing, tail
+
+
 async def _run_script(
     conn: asyncssh.SSHClientConnection,
     local_script: Path,
@@ -323,15 +358,67 @@ async def _async_preflight(
                 remote_tmp = f"/tmp/inspection_{job_id[:8]}"
                 await conn.run(f"mkdir -p {remote_tmp}", check=True)
 
-                # baseline 패키지 설치
+                # baseline 패키지 설치 + 패키지별 검증
                 baseline = profile.get("pre_install", {}).get("baseline", [])
+                baseline_failed_msg: str | None = None
                 if baseline and secret:
                     log.info("preflight.baseline_install", packages=baseline)
-                    ok, output = await _apt_install(conn, baseline, secret)
+                    ok, installed, missing, apt_tail = await _install_and_verify_baseline(
+                        conn, baseline, secret
+                    )
                     if not ok:
-                        log.warning("preflight.baseline_failed", output=output[:200])
+                        log.error(
+                            "preflight.baseline_failed",
+                            installed=installed,
+                            missing=missing,
+                            apt_tail=apt_tail[:500],
+                        )
+                        # check_results에 사유 기록
+                        async with SessionLocal() as session:
+                            await _save_check_result(
+                                session,
+                                job_id,
+                                check_name="baseline_install",
+                                status="fail",
+                                detail=(
+                                    f"installed={','.join(installed) or 'none'}|"
+                                    f"missing={','.join(missing)}|"
+                                    f"apt_tail={apt_tail[:300]}"
+                                ),
+                                raw_output={
+                                    "installed": installed,
+                                    "missing": missing,
+                                    "apt_tail": apt_tail[:2000],
+                                },
+                            )
+                        baseline_failed_msg = (
+                            f"baseline install failed — missing: {','.join(missing)}"
+                        )
                 elif baseline and not secret:
-                    log.warning("preflight.baseline_skip", reason="sudo_password not provided")
+                    log.error("preflight.baseline_skip", reason="sudo_password not provided")
+                    async with SessionLocal() as session:
+                        await _save_check_result(
+                            session,
+                            job_id,
+                            check_name="baseline_install",
+                            status="fail",
+                            detail=(
+                                f"missing={','.join(baseline)}|reason=sudo_password not provided"
+                            ),
+                            raw_output={
+                                "installed": [],
+                                "missing": baseline,
+                                "reason": "sudo_password not provided",
+                            },
+                        )
+                    baseline_failed_msg = "baseline install skipped: sudo_password not provided"
+
+                if baseline_failed_msg:
+                    await _mark_failed(job_id, baseline_failed_msg)
+                    _dispatch_cleanup(
+                        job_id, target_host, target_user, product_profile, sudo_password
+                    )
+                    return
 
                 # sys-config 전체 적용 (sw_requirements 유무 무관)
                 from workers.sw_install import (
@@ -850,13 +937,26 @@ async def _async_cleanup(
                     log.warning("cleanup.temp_pkg_skip", reason="sudo_password not provided")
 
                 # 디렉토리 제거
+                # 허용 prefix: /opt/ (sudo 필요), $HOME/ 또는 ~/ (sudo 불필요)
                 for dir_path in cleanup_cfg.get("remove_dirs", []):
-                    if not dir_path.startswith("/opt/"):
-                        log.warning("cleanup.dir_skip", path=dir_path, reason="not under /opt/")
+                    is_opt = dir_path.startswith("/opt/")
+                    is_home = dir_path.startswith("$HOME/") or dir_path.startswith("~/")
+                    if not (is_opt or is_home):
+                        log.warning(
+                            "cleanup.dir_skip",
+                            path=dir_path,
+                            reason="not under /opt/ or $HOME/",
+                        )
                         continue
+                    if is_opt:
+                        cmd = f"sudo -S rm -rf {dir_path}"
+                        stdin_input = secret.get_secret_value() if secret else None
+                    else:
+                        cmd = f"rm -rf {dir_path}"
+                        stdin_input = None
                     result = await conn.run(
-                        f"sudo -S rm -rf {dir_path}",
-                        input=secret.get_secret_value() if secret else None,
+                        cmd,
+                        input=stdin_input,
                         check=False,
                         timeout=30,
                     )

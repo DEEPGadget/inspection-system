@@ -56,7 +56,7 @@
   },
   "cleanup": {
     "remove_packages": ["stress-ng"],
-    "remove_dirs": ["/opt/gpu-burn", "/opt/nccl-tests"],
+    "remove_dirs": ["$HOME/gpu-burn", "$HOME/nccl-tests"],
     "on_failure": "warn"
   }
 }

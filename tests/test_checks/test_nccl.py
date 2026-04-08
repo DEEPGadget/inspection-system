@@ -134,16 +134,28 @@ def test_mock_fail_4gpu_low_bw():
     assert "FAIL:4gpu_bw_3_gbs_below_5_gbs" in data["detail"]
 
 
-def test_mock_warn_no_tool():
-    """nccl-tests 바이너리 없음 → warn."""
+def test_mock_fail_build_tools_missing():
+    """nccl-tests 빌드 도구 누락 → fail + 사유."""
     sample = (
-        '{"check":"nccl_bandwidth","status":"warn",'
+        '{"check":"nccl_bandwidth","status":"fail",'
         '"detail":"gpu_count=8|min_bw_2gpu_gbs=30|min_bw_4gpu_gbs=5'
-        '|WARN:no_nccl_test_tool_available"}'
+        '|FAIL:nccl_tests_build_tools_missing=nvcc"}'
     )
     data = json.loads(sample)
-    assert data["status"] == "warn"
-    assert "WARN:no_nccl_test_tool_available" in data["detail"]
+    assert data["status"] == "fail"
+    assert "FAIL:nccl_tests_build_tools_missing" in data["detail"]
+
+
+def test_mock_fail_make_failed():
+    """nccl-tests make 실패 → 사유 포함."""
+    sample = (
+        '{"check":"nccl_bandwidth","status":"fail",'
+        '"detail":"gpu_count=8|min_bw_2gpu_gbs=30'
+        '|FAIL:nccl_tests_make_failed:nccl.h: No such file or directory // make: *** Error 1"}'
+    )
+    data = json.loads(sample)
+    assert data["status"] == "fail"
+    assert "FAIL:nccl_tests_make_failed" in data["detail"]
 
 
 def test_env_threshold_override():
