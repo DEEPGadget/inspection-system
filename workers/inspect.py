@@ -389,7 +389,8 @@ def run_preflight(
         )
         return {"job_id": job_id, "phase": "preflight", "result": "ok"}
     except asyncssh.DisconnectError as exc:
-        asyncio.run(_mark_failed(job_id, f"SSH disconnect: {exc}"))
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_failed(job_id, f"SSH disconnect: {exc}"))
         raise self.retry(exc=exc)
     except asyncssh.PermissionDenied as exc:
         asyncio.run(_mark_failed(job_id, f"SSH auth failed: {exc}"))
@@ -398,7 +399,8 @@ def run_preflight(
         asyncio.run(_mark_failed(job_id, str(exc)))
         raise
     except Exception as exc:
-        asyncio.run(_mark_failed(job_id, str(exc)))
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_failed(job_id, str(exc)))
         raise self.retry(exc=exc)
 
 
@@ -504,13 +506,15 @@ def run_post_install(
         )
         return {"job_id": job_id, "phase": "post_install", "result": "ok"}
     except asyncssh.DisconnectError as exc:
-        asyncio.run(_mark_failed(job_id, f"SSH disconnect: {exc}"))
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_failed(job_id, f"SSH disconnect: {exc}"))
         raise self.retry(exc=exc)
     except asyncssh.PermissionDenied as exc:
         asyncio.run(_mark_failed(job_id, f"SSH auth failed: {exc}"))
         raise
     except Exception as exc:
-        asyncio.run(_mark_failed(job_id, str(exc)))
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_failed(job_id, str(exc)))
         raise self.retry(exc=exc)
 
 
