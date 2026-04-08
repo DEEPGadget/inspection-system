@@ -317,9 +317,11 @@ def validate_results(
     except anthropic.AuthenticationError as exc:
         asyncio.run(_mark_failed(job_id, f"Claude API auth error: {exc}"))
         raise
-    except anthropic.RateLimitError as exc:
-        asyncio.run(_mark_failed(job_id, f"Claude API rate limit: {exc}"))
+    except (anthropic.APIConnectionError, anthropic.RateLimitError) as exc:
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_failed(job_id, str(exc)))
         raise self.retry(exc=exc, countdown=60)
     except Exception as exc:
-        asyncio.run(_mark_failed(job_id, str(exc)))
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_failed(job_id, str(exc)))
         raise self.retry(exc=exc)

@@ -20,6 +20,7 @@ class JobCreate(BaseModel):
     expected_specs: dict | None = Field(
         None, description="기대 스펙 (e.g. {expected_gpu_count: 8}), fail_if_not_equal 규칙용"
     )
+    hw_manual_checks: dict | None = Field(None, description="Phase 1 수동 검수 8항목 GUI 입력값")
 
 
 class JobResponse(BaseModel):
@@ -29,6 +30,8 @@ class JobResponse(BaseModel):
     target_user: str
     product_profile: str
     sw_requirements: str | None
+    expected_specs: dict | None
+    hw_manual_checks: dict | None
     celery_task_id: str | None
     result_path: str | None
     error_message: str | None
