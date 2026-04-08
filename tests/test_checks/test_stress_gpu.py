@@ -100,17 +100,40 @@ def test_detail_contains_required_fields():
 def test_mock_output_parsing():
     """스크립트 출력 예시가 유효한 JSON인지 확인."""
     sample = (
-        '{"check":"stress_gpu","status":"warn",'
-        '"detail":"gpu_count=2|tdp_w=400|tool=none|duration_s=1'
-        "|peak_temp_c=0|peak_power_w=0|power_ratio_pct=0|avg_util_pct=0"
+        '{"check":"stress_gpu","status":"pass",'
+        '"detail":"gpu_count=2|tdp_w=400|tool=gpu_burn|duration_s=1'
+        "|peak_temp_c=70|peak_power_w=380|power_ratio_pct=95|avg_util_pct=99"
         "|slowdown_hw=0|slowdown_sw=0|slowdown_pwr=0"
         "|ecc_corr_before=0|ecc_corr_after=0|ecc_delta_corr=0"
-        "|ecc_uncorr_before=0|ecc_uncorr_after=0|ecc_delta_uncorr=0"
-        '|WARN:no_stress_tool_temp_only"}'
+        '|ecc_uncorr_before=0|ecc_uncorr_after=0|ecc_delta_uncorr=0"}'
     )
     data = json.loads(sample)
-    assert data["status"] == "warn"
-    assert "WARN:no_stress_tool_temp_only" in data["detail"]
+    assert data["status"] == "pass"
+    assert "tool=gpu_burn" in data["detail"]
+
+
+def test_mock_build_tools_missing_returns_fail():
+    """gpu_burn 빌드 도구 누락 시 fail + 사유."""
+    sample = (
+        '{"check":"stress_gpu","status":"fail",'
+        '"detail":"gpu_count=8|tdp_w=700'
+        '|FAIL:gpu_burn_build_tools_missing=nvcc,make|tool=none|duration_s=300"}'
+    )
+    data = json.loads(sample)
+    assert data["status"] == "fail"
+    assert "FAIL:gpu_burn_build_tools_missing" in data["detail"]
+
+
+def test_mock_clone_failed_returns_fail():
+    """gpu_burn git clone 실패 시 사유 포함."""
+    sample = (
+        '{"check":"stress_gpu","status":"fail",'
+        '"detail":"gpu_count=8|tdp_w=700'
+        '|FAIL:gpu_burn_clone_failed:fatal: unable to access // Could not resolve host"}'
+    )
+    data = json.loads(sample)
+    assert data["status"] == "fail"
+    assert "FAIL:gpu_burn_clone_failed" in data["detail"]
 
 
 def test_fail_conditions_in_detail():

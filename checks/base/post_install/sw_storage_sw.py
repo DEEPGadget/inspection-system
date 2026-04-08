@@ -94,6 +94,20 @@ def main():
         non_nvme_disks = get_non_nvme_disks()
         root_used_pct, root_avail = check_root_fs()
 
+        # nvme 장치가 있으면 nvme-cli가 반드시 설치돼 있어야 함 (baseline 책임)
+        # 없으면 즉시 fail + 사유 (설치는 preflight/sw_install이 담당)
+        nvme_cli_present = _run("command -v nvme").returncode == 0
+        if nvme_devices and not nvme_cli_present:
+            detail = "|".join(
+                [
+                    f"nvme_count={len(nvme_devices)}",
+                    "nvme_cli=missing",
+                    "FAIL:nvme-cli not installed (baseline install missing or failed)",
+                ]
+            )
+            print(json.dumps({"check": "sw_storage_sw", "status": "fail", "detail": detail}))
+            return
+
         nvme_critical_count = 0
         nvme_wear_high_count = 0
         nvme_cli_available = True
