@@ -8,6 +8,8 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import anthropic
+import httpx
 import pytest
 
 from workers.validate import _load_rules, _save_verdict_to_nfs
@@ -388,3 +390,70 @@ async def test_validate_expected_specs_passed_to_rule_evaluate(tmp_path, monkeyp
     # rule_evaluate 두 번째 인자가 check_results, 세 번째가 expected_specs
     call_kwargs = mock_evaluate.call_args
     assert call_kwargs[0][2] == expected
+
+
+# ---------------------------------------------------------------------------
+# validate_results Celery task — retry 중 _mark_failed 미호출
+# ---------------------------------------------------------------------------
+
+
+def _rate_limit_error() -> anthropic.RateLimitError:
+    return anthropic.RateLimitError(
+        message="rate limit exceeded",
+        response=httpx.Response(429),
+        body={},
+    )
+
+
+def test_validate_retry_does_not_mark_failed(monkeypatch):
+    """RateLimitError retry 중(retries < max_retries)에는 _mark_failed 미호출."""
+    from workers.validate import validate_results
+
+    exc = _rate_limit_error()
+    mark_failed_calls: list[str] = []
+
+    async def fake_async_validate(job_id, sudo_password):
+        raise exc
+
+    async def fake_mark_failed(job_id, msg):
+        mark_failed_calls.append(job_id)
+
+    monkeypatch.setattr("workers.validate._async_validate", fake_async_validate)
+    monkeypatch.setattr("workers.validate._mark_failed", fake_mark_failed)
+
+    mock_self = MagicMock()
+    mock_self.request.retries = 1  # < max_retries=3
+    mock_self.max_retries = 3
+    mock_self.retry.side_effect = Exception("celery retry signal")
+
+    with pytest.raises(Exception, match="celery retry signal"):
+        validate_results.run(mock_self, "test-job-id")
+
+    assert not mark_failed_calls, "_mark_failed should not be called during retry"
+
+
+def test_validate_mark_failed_at_max_retries(monkeypatch):
+    """RateLimitError가 max_retries 도달 시 _mark_failed 호출."""
+    from workers.validate import validate_results
+
+    exc = _rate_limit_error()
+    mark_failed_calls: list[str] = []
+
+    async def fake_async_validate(job_id, sudo_password):
+        raise exc
+
+    async def fake_mark_failed(job_id, msg):
+        mark_failed_calls.append(job_id)
+
+    monkeypatch.setattr("workers.validate._async_validate", fake_async_validate)
+    monkeypatch.setattr("workers.validate._mark_failed", fake_mark_failed)
+
+    mock_self = MagicMock()
+    mock_self.request.retries = 3  # == max_retries
+    mock_self.max_retries = 3
+    mock_self.retry.side_effect = Exception("celery retry signal")
+
+    with pytest.raises(Exception, match="celery retry signal"):
+        validate_results.run(mock_self, "test-job-id")
+
+    assert "test-job-id" in mark_failed_calls

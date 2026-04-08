@@ -243,3 +243,29 @@ async def test_delete_job_not_found(test_db):
     ) as client:
         response = await client.delete(f"/api/jobs/{uuid.uuid4()}/")
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_job_hw_manual_checks_persisted(test_db, mock_celery_task):
+    """hw_manual_checks가 DB에 저장되는지 검증 — 리포트 Section 2 데이터 손실 방지."""
+    hw_data = {"외관 이상 없음": True, "케이블 체결 상태": True, "팬 동작": True}
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", follow_redirects=True
+    ) as client:
+        create_resp = await client.post(
+            "/api/jobs/",
+            json={
+                "target_host": "10.0.0.10",
+                "target_user": "root",
+                "product_profile": "gpu_server",
+                "sudo_password": "secret",
+                "hw_manual_checks": hw_data,
+            },
+        )
+        assert create_resp.status_code == 201
+        job_id = create_resp.json()["id"]
+
+        detail_resp = await client.get(f"/api/jobs/{job_id}/")
+
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["hw_manual_checks"] == hw_data

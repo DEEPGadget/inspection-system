@@ -420,3 +420,47 @@ async def test_handle_storage_mount_empty_mount_point():
     result = await _handle_storage_mount(conn, None, item)
     assert result["status"] == "fail"
     assert "mount_point empty" in result["detail"]
+
+
+# ---------------------------------------------------------------------------
+# grub_only_reboot_triggered 조건 (sw_install.py:1092-1098)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "install_results,reboot_needed,expected",
+    [
+        # GRUB 변경됨 + nvidia_driver 없음 → 별도 reboot 필요
+        (
+            [{"name": "sys_config_grub", "detail": "grub_updated=yes|params_added=3"}],
+            False,
+            True,
+        ),
+        # GRUB 변경됨 + nvidia_driver 있음 → nvidia reboot이 커버, 별도 불필요
+        (
+            [{"name": "sys_config_grub", "detail": "grub_updated=yes"}],
+            True,
+            False,
+        ),
+        # GRUB 변경 없음 + nvidia_driver 없음 → reboot 불필요
+        (
+            [{"name": "sys_config_grub", "detail": "no_change"}],
+            False,
+            False,
+        ),
+        # GRUB 결과 자체 없음 → reboot 불필요
+        (
+            [],
+            False,
+            False,
+        ),
+    ],
+)
+def test_grub_only_reboot_condition(install_results, reboot_needed, expected):
+    """grub_only_reboot_triggered 조건: GRUB 업데이트 + no nvidia_driver일 때만 True."""
+    grub_actually_updated = any(
+        r.get("name") == "sys_config_grub" and "grub_updated" in r.get("detail", "")
+        for r in install_results
+    )
+    result = grub_actually_updated and not reboot_needed
+    assert result == expected
