@@ -17,6 +17,7 @@ from api.models import Base  # noqa: E402
 
 target_metadata = Base.metadata
 
+
 # DATABASE_URL 환경변수에서 URL 주입 (asyncpg → psycopg2 변환)
 def _sync_url() -> str:
     url = os.environ.get("DATABASE_URL", config.get_main_option("sqlalchemy.url", ""))

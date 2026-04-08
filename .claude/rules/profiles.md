@@ -13,7 +13,7 @@
 {
   "profile_name": "gpu_server",
   "pre_install": {
-    "baseline": ["pciutils", "nvme-cli", "ipmitool", "lm-sensors", "smartctl"],
+    "baseline": ["pciutils", "nvme-cli", "ipmitool", "lm-sensors", "smartmontools"],
     "stress_tools": ["stress-ng"]
   },
   "phases": {

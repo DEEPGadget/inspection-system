@@ -27,6 +27,7 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
+    "aiosqlite>=0.20",
     "ruff>=0.8",
     "shellcheck-py>=0.10",
 ]

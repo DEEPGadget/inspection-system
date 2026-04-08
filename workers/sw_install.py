@@ -1052,6 +1052,7 @@ async def _async_sw_install(
         )
 
         connect_kwargs = _build_connect_kwargs(target_host, target_user)
+        grub_only_reboot_triggered = False
 
         # ── 1차 SSH 세션: sys_config + pre-reboot 항목 ──────────────────────
         try:
@@ -1087,71 +1088,84 @@ async def _async_sw_install(
                         }
                     )
 
-                # cuda_version 미리 추출 (torch 설치 시 필요)
-                cuda_version = next(
-                    (i.get("version") for i in items if i.get("name") == "cuda"),
-                    None,
+                # GRUB-only 재부팅: GRUB 파라미터가 변경됐고 nvidia_driver 재부팅이 없을 때
+                grub_actually_updated = any(
+                    r.get("name") == "sys_config_grub" and "grub_updated" in r.get("detail", "")
+                    for r in install_results
                 )
+                if grub_actually_updated and not reboot_needed:
+                    await _do_reboot(conn, secret)
+                    grub_only_reboot_triggered = True
 
-                # pre-reboot agent_required 항목: agent plan을 한 번만 실행하고 결과 재사용
-                pre_agent_items = [
-                    i
-                    for i in pre_items
-                    if i.get("type") == "sw_install" and i.get("agent_required")
-                ]
-                pre_agent_ok, pre_agent_detail = False, ""
-                if pre_agent_items:
-                    pre_agent_ok, pre_agent_detail = await _execute_agent_plan(
-                        conn, secret, agent_plan_steps
+                if not grub_only_reboot_triggered:
+                    # cuda_version 미리 추출 (torch 설치 시 필요)
+                    cuda_version = next(
+                        (i.get("version") for i in items if i.get("name") == "cuda"),
+                        None,
                     )
 
-                # pre-reboot 항목 설치
-                for item in pre_items:
-                    item_type = item.get("type")
-
-                    if item_type == "sw_install":
-                        if item.get("agent_required"):
-                            result_entry = _make_result(
-                                item.get("name", ""),
-                                "pass" if pre_agent_ok else "fail",
-                                pre_agent_detail,
-                            )
-                        else:
-                            result_entry = await _install_sw_item(
-                                conn,
-                                secret,
-                                item,
-                                installed_set,
-                                failed_deps,
-                                os_info,
-                                cuda_version,
-                            )
-                        install_results.append(result_entry)
-                        if result_entry["status"] == "pass":
-                            installed_set.add(item.get("name", ""))
-                        else:
-                            failed_deps.add(item.get("name", ""))
-
-                    elif item_type == "account":
-                        r = await _handle_account(conn, secret, item)
-                        install_results.append(r)
-
-                    elif item_type == "storage_mount":
-                        r = await _handle_storage_mount(conn, secret, item)
-                        install_results.append(r)
-
-                    elif item_type == "sys_config":
-                        r = await _handle_sys_config_agent(
-                            conn, secret, job_id, item, sw_requirements
+                    # pre-reboot agent_required 항목: agent plan을 한 번만 실행하고 결과 재사용
+                    pre_agent_items = [
+                        i
+                        for i in pre_items
+                        if i.get("type") == "sw_install" and i.get("agent_required")
+                    ]
+                    pre_agent_ok, pre_agent_detail = False, ""
+                    if pre_agent_items:
+                        pre_agent_ok, pre_agent_detail = await _execute_agent_plan(
+                            conn, secret, agent_plan_steps
                         )
-                        install_results.append(r)
 
-                # reboot 발행 (nvidia_driver 설치 완료 + post_items 있을 때)
-                if reboot_needed and post_items and "nvidia_driver" not in failed_deps:
-                    await _do_reboot(conn, secret)
+                    # pre-reboot 항목 설치
+                    for item in pre_items:
+                        item_type = item.get("type")
+
+                        if item_type == "sw_install":
+                            if item.get("agent_required"):
+                                result_entry = _make_result(
+                                    item.get("name", ""),
+                                    "pass" if pre_agent_ok else "fail",
+                                    pre_agent_detail,
+                                )
+                            else:
+                                result_entry = await _install_sw_item(
+                                    conn,
+                                    secret,
+                                    item,
+                                    installed_set,
+                                    failed_deps,
+                                    os_info,
+                                    cuda_version,
+                                )
+                            install_results.append(result_entry)
+                            if result_entry["status"] == "pass":
+                                installed_set.add(item.get("name", ""))
+                            else:
+                                failed_deps.add(item.get("name", ""))
+
+                        elif item_type == "account":
+                            r = await _handle_account(conn, secret, item)
+                            install_results.append(r)
+
+                        elif item_type == "storage_mount":
+                            r = await _handle_storage_mount(conn, secret, item)
+                            install_results.append(r)
+
+                        elif item_type == "sys_config":
+                            r = await _handle_sys_config_agent(
+                                conn, secret, job_id, item, sw_requirements
+                            )
+                            install_results.append(r)
+
+                    # reboot 발행 (nvidia_driver 설치 완료 + post_items 있을 때)
+                    if reboot_needed and post_items and "nvidia_driver" not in failed_deps:
+                        await _do_reboot(conn, secret)
 
         except asyncssh.DisconnectError:
-            if not (reboot_needed and post_items and "nvidia_driver" not in failed_deps):
+            driver_reboot_active = (
+                reboot_needed and post_items and "nvidia_driver" not in failed_deps
+            )
+            if not (driver_reboot_active or grub_only_reboot_triggered):
                 raise
 
         # ── reboot 대기 ───────────────────────────────────────────────────────
@@ -1220,6 +1234,77 @@ async def _async_sw_install(
                         installed_set.add(item.get("name", ""))
                     else:
                         failed_deps.add(item.get("name", ""))
+
+        # ── GRUB-only 재부팅 재접속 + 항목 설치 ──────────────────────────────
+        if grub_only_reboot_triggered:
+            async with SessionLocal() as session:
+                await _update_job(session, job_id, status="rebooting")
+            await publish_job_status(job_id, "rebooting")
+
+            log.info("sw_install.grub_reboot.waiting", job_id=job_id)
+            new_conn = await _poll_ssh_reconnect(connect_kwargs, timeout=300, interval=10)
+            if new_conn is None:
+                await _mark_failed(
+                    job_id,
+                    "reboot_timeout: server did not respond within 300s after GRUB update",
+                )
+                _dispatch_cleanup(job_id, target_host, target_user, product_profile, sudo_password)
+                return
+
+            async with new_conn:
+                cuda_version = next(
+                    (i.get("version") for i in items if i.get("name") == "cuda"),
+                    None,
+                )
+                pre_agent_items = [
+                    i
+                    for i in pre_items
+                    if i.get("type") == "sw_install" and i.get("agent_required")
+                ]
+                pre_agent_ok, pre_agent_detail = False, ""
+                if pre_agent_items:
+                    pre_agent_ok, pre_agent_detail = await _execute_agent_plan(
+                        new_conn, secret, agent_plan_steps
+                    )
+                for item in pre_items:
+                    item_type = item.get("type")
+
+                    if item_type == "sw_install":
+                        if item.get("agent_required"):
+                            result_entry = _make_result(
+                                item.get("name", ""),
+                                "pass" if pre_agent_ok else "fail",
+                                pre_agent_detail,
+                            )
+                        else:
+                            result_entry = await _install_sw_item(
+                                new_conn,
+                                secret,
+                                item,
+                                installed_set,
+                                failed_deps,
+                                os_info,
+                                cuda_version,
+                            )
+                        install_results.append(result_entry)
+                        if result_entry["status"] == "pass":
+                            installed_set.add(item.get("name", ""))
+                        else:
+                            failed_deps.add(item.get("name", ""))
+
+                    elif item_type == "account":
+                        r = await _handle_account(new_conn, secret, item)
+                        install_results.append(r)
+
+                    elif item_type == "storage_mount":
+                        r = await _handle_storage_mount(new_conn, secret, item)
+                        install_results.append(r)
+
+                    elif item_type == "sys_config":
+                        r = await _handle_sys_config_agent(
+                            new_conn, secret, job_id, item, sw_requirements
+                        )
+                        install_results.append(r)
 
         # ── DB + NFS 결과 저장 ───────────────────────────────────────────────
         for r in install_results:
