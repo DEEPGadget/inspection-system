@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -563,7 +564,10 @@ async def _install_python(
     if not version:
         return False, "python version not specified"
     minor = version.split(".")[-1] if "." in version else version
-    full_ver = f"3.{minor}" if not version.startswith("3.") else version
+    if version.startswith("3."):
+        full_ver = ".".join(version.split(".")[:2])  # "3.11.5" → "3.11"
+    else:
+        full_ver = f"3.{minor}"
     script = f"""\
 DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
 add-apt-repository -y ppa:deadsnakes/ppa
@@ -764,16 +768,21 @@ async def _handle_account(
             "detail": "username empty",
         }
 
-    sudo_line = f"usermod -aG sudo {username}" if sudo else "true"
+    safe_user = shlex.quote(username)
+    sudo_line = f"usermod -aG sudo {safe_user}" if sudo else "true"
     script = f"""\
-useradd -m -s /bin/bash {username} 2>&1 || true
-echo '{username}:{password}' | chpasswd
+useradd -m -s /bin/bash {safe_user} 2>&1 || true
 {sudo_line}
 echo "account_created"
 """
     ok, out = await _run_sudo(conn, script, secret, timeout=30)
+    if ok and password:
+        # 패스워드를 stdin으로 전달 — 쉘 인자·스크립트 텍스트에 노출되지 않음
+        chpasswd_input = secret_input(secret) + f"{username}:{password}\n"
+        cp = await conn.run("sudo -S chpasswd", input=chpasswd_input, check=False, timeout=10)
+        ok = cp.exit_status == 0
     if ok:
-        verify = await conn.run(f"id {username}", check=False, timeout=10)
+        verify = await conn.run(f"id {safe_user}", check=False, timeout=10)
         ok = verify.exit_status == 0
 
     return {
@@ -1142,7 +1151,7 @@ async def _async_sw_install(
                     await _do_reboot(conn, secret)
 
         except asyncssh.DisconnectError:
-            if not (reboot_needed and post_items):
+            if not (reboot_needed and post_items and "nvidia_driver" not in failed_deps):
                 raise
 
         # ── reboot 대기 ───────────────────────────────────────────────────────
@@ -1324,11 +1333,13 @@ def run_sw_install(
         )
         return {"job_id": job_id, "phase": "sw_install", "result": "ok"}
     except asyncssh.DisconnectError as exc:
-        asyncio.run(_mark_failed(job_id, f"SSH disconnect: {exc}"))
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_failed(job_id, f"SSH disconnect: {exc}"))
         raise self.retry(exc=exc)
     except asyncssh.PermissionDenied as exc:
         asyncio.run(_mark_failed(job_id, f"SSH auth failed: {exc}"))
         raise
     except Exception as exc:
-        asyncio.run(_mark_failed(job_id, str(exc)))
+        if self.request.retries >= self.max_retries:
+            asyncio.run(_mark_failed(job_id, str(exc)))
         raise self.retry(exc=exc)

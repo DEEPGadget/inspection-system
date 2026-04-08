@@ -268,7 +268,8 @@ async def test_handle_account_success():
     secret = SecretStr("rootpw")
 
     run_results = [
-        MagicMock(stdout="account_created", stderr="", exit_status=0),  # _run_sudo
+        MagicMock(stdout="account_created", stderr="", exit_status=0),  # _run_sudo (useradd)
+        MagicMock(stdout="", stderr="", exit_status=0),  # sudo -S chpasswd
         MagicMock(stdout="uid=1001(testuser)", stderr="", exit_status=0),  # id verify
     ]
     conn = MagicMock()
@@ -277,6 +278,74 @@ async def test_handle_account_success():
     result = await _handle_account(conn, secret, item)
     assert result["status"] == "pass"
     assert "testuser" in result["name"]
+
+
+@pytest.mark.asyncio
+async def test_handle_account_single_quote_password():
+    """싱글쿼트 포함 패스워드 — chpasswd stdin 전달이므로 bash 파싱 오류 없음."""
+    from pydantic import SecretStr
+
+    from workers.sw_install import _handle_account
+
+    item = {
+        "type": "account",
+        "username": "alice",
+        "password": "p'assword",  # 싱글쿼트 포함
+        "sudo": False,
+        "agent_required": False,
+    }
+    secret = SecretStr("rootpw")
+
+    run_results = [
+        MagicMock(stdout="account_created", stderr="", exit_status=0),
+        MagicMock(stdout="", stderr="", exit_status=0),
+        MagicMock(stdout="uid=1002(alice)", stderr="", exit_status=0),
+    ]
+    conn = MagicMock()
+    conn.run = AsyncMock(side_effect=run_results)
+
+    # 예외 없이 실행되고 pass 반환
+    result = await _handle_account(conn, secret, item)
+    assert result["status"] == "pass"
+
+    # chpasswd 호출 시 stdin에 패스워드가 포함돼야 함 (쉘 스크립트 텍스트에는 없음)
+    chpasswd_call = conn.run.call_args_list[1]
+    assert "chpasswd" in chpasswd_call.args[0]
+    chpasswd_input = chpasswd_call.kwargs.get("input", "")
+    assert "p'assword" in chpasswd_input
+
+
+@pytest.mark.asyncio
+async def test_handle_account_username_not_in_script_text():
+    """username이 _run_sudo 스크립트 인자에 shlex.quote 처리되어 들어가는지 확인."""
+    from pydantic import SecretStr
+
+    from workers.sw_install import _handle_account
+
+    item = {
+        "type": "account",
+        "username": "normal_user",
+        "password": "pw",
+        "sudo": True,
+        "agent_required": False,
+    }
+    secret = SecretStr("rootpw")
+
+    run_results = [
+        MagicMock(stdout="account_created", stderr="", exit_status=0),
+        MagicMock(stdout="", stderr="", exit_status=0),
+        MagicMock(stdout="uid=1003(normal_user)", stderr="", exit_status=0),
+    ]
+    conn = MagicMock()
+    conn.run = AsyncMock(side_effect=run_results)
+
+    result = await _handle_account(conn, secret, item)
+    assert result["status"] == "pass"
+
+    # 첫 번째 run은 _run_sudo (sudo -S bash -s); input에 useradd 스크립트 포함
+    first_call_input = conn.run.call_args_list[0].kwargs.get("input", "")
+    assert "normal_user" in first_call_input
+    assert "usermod" in first_call_input  # sudo=True
 
 
 @pytest.mark.asyncio
@@ -299,6 +368,47 @@ async def test_handle_account_empty_username():
 # ---------------------------------------------------------------------------
 # _handle_storage_mount (SSH mock)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# _install_python 버전 파싱
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "version_input, expected_pkg",
+    [
+        ("3.11", "python3.11"),  # 2파트 — 기존 정상 케이스
+        ("3.11.5", "python3.11"),  # 3파트 — 패치 제거 후 major.minor만 사용
+        ("3.10.14", "python3.10"),  # 3파트 다른 버전
+        ("11", "python3.11"),  # minor만 — 3. 접두사 추가
+        ("12", "python3.12"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_install_python_version_parsing(version_input, expected_pkg):
+    """_install_python 이 올바른 apt 패키지명을 구성하는지 확인."""
+    from pydantic import SecretStr
+
+    from workers.sw_install import _install_python
+
+    secret = SecretStr("rootpw")
+    calls: list[str] = []
+
+    async def mock_run(cmd, **kwargs):
+        calls.append(kwargs.get("input", ""))
+        return MagicMock(stdout="python_installed", stderr="", exit_status=0)
+
+    conn = MagicMock()
+    conn.run = mock_run
+
+    await _install_python(conn, secret, version_input)
+
+    # 첫 번째 conn.run 호출(_run_sudo)의 stdin에 올바른 패키지명이 포함돼야 함
+    script_input = calls[0]
+    assert expected_pkg in script_input, (
+        f"version={version_input!r}: expected {expected_pkg!r} in script, got: {script_input[:300]}"
+    )
 
 
 @pytest.mark.asyncio
