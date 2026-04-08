@@ -21,6 +21,7 @@ async def create_job(body: JobCreate, db: AsyncSession = Depends(get_db)):
         product_profile=body.product_profile,
         sw_requirements=body.sw_requirements,
         expected_specs=body.expected_specs,
+        hw_manual_checks=body.hw_manual_checks,
     )
     db.add(job)
     await db.flush()  # id 확보
