@@ -155,6 +155,7 @@ def main():
             cwd=GPU_BURN_DIR,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
+            text=True,
         )
     except Exception as e:
         details.append(f"FAIL:gpu_burn_launch_failed:{e}")
