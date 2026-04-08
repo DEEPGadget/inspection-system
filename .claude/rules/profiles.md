@@ -51,7 +51,7 @@
   },
   "cleanup": {
     "remove_packages": ["stress-ng"],
-    "remove_dirs": ["/opt/gpu-burn", "/opt/nccl-tests"],
+    "remove_dirs": ["$HOME/gpu-burn", "$HOME/nccl-tests"],
     "on_failure": "warn"
   }
 }
@@ -94,7 +94,9 @@ GPU 없는 서버(lspci에 NVIDIA 없음)는 이 설정 전체 스킵.
 ## cleanup 정책
 
 - `remove_packages`: apt 제거 대상 목록
-- `remove_dirs`: rm -rf 대상 목록 (명시된 경로만)
+- `remove_dirs`: rm -rf 대상 목록. 허용 prefix는 `/opt/` 또는 `$HOME/`·`~/`. 그 외 경로는 inspect.py cleanup이 skip하고 warning 로그
+  - `/opt/`: sudo로 제거
+  - `$HOME/`·`~/`: SSH 접속 유저 권한으로 sudo 없이 제거 (gpu_burn / nccl-tests 등 사용자 홈 빌드 결과물 대상)
 - `on_failure: "warn"`: cleanup 실패해도 job은 진행
 
 ## 확장 시 주의

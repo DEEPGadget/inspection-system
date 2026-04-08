@@ -16,6 +16,7 @@ stdout에 JSON 한 줄만 출력. 디버그는 stderr.
   - `shell=True` 이유: 파이프/리다이렉트 필요한 시스템 명령 조합, 대상 서버에서 1회성 실행 후 폐기
 - 파라미터: `os.environ.get("VAR", "default")`로 수신 (sshd AcceptEnv 우회)
 - apt/sudo 필요 패키지는 스크립트 내부가 아닌 프로파일 `pre_install.baseline` 또는 `stress_tools`에 등록
+- gpu_burn / nccl-tests 같은 git 빌드 도구는 `$HOME/` 하위에 빌드 (sudo 불필요). cleanup `remove_dirs`에 `$HOME/...` 경로 등록
 
 ## 새 스크립트 추가 시 체크리스트
 
@@ -36,10 +37,10 @@ stdout에 JSON 한 줄만 출력. 디버그는 stderr.
 | preflight | `sw_power_mgmt.py` | sleep.target·CPU governor·C-state |
 | preflight | `sw_auto_update.py` | unattended-upgrades 비활성화 확인 |
 | post_install | `sw_gpu_sw.py` | nvidia-smi — driver·VRAM·온도·ECC·NVLink |
-| post_install | `sw_storage_sw.py` | nvme-cli/smartctl — NVMe 헬스·SMART |
-| post_install | `stress_gpu.py` | GPU burn-in (기본 300s) |
+| post_install | `sw_storage_sw.py` | nvme-cli/smartctl — NVMe 헬스·SMART. nvme 장치 + nvme-cli 부재 시 즉시 fail (사유 포함) |
+| post_install | `stress_gpu.py` | gpu_burn 전용. `~/gpu-burn` 빌드(`git clone` + `make`, sudo 불필요), `gpu_burn -d -tc <duration>` 실행. 단계별 실패 사유(stderr 마지막 5줄) 명시 |
 | post_install | `stress_cpu.py` | CPU 부하 테스트 (기본 120s) |
-| post_install | `nccl_bandwidth.py` | AllReduce 대역폭 |
+| post_install | `nccl_bandwidth.py` | nccl-tests 전용. `~/nccl-tests` 빌드, `all_reduce_perf` 실행. 빌드/측정 실패 시 사유 포함 fail |
 | collect | `collect_all_logs.py` | dmesg·journalctl·XID 수집 |
 
 ## v2 리팩토링 필요
