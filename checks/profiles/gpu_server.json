@@ -4,6 +4,10 @@
     "baseline": ["pciutils", "nvme-cli", "ipmitool", "lm-sensors", "smartmontools"],
     "stress_tools": ["stress-ng"]
   },
+  "stress_config": {
+    "driver_version": "580",
+    "cuda_version": "13"
+  },
   "phases": {
     "preflight": {
       "scripts": [

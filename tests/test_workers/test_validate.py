@@ -398,9 +398,11 @@ async def test_validate_expected_specs_passed_to_rule_evaluate(tmp_path, monkeyp
 
 
 def _rate_limit_error() -> anthropic.RateLimitError:
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx.Response(429, request=request)
     return anthropic.RateLimitError(
         message="rate limit exceeded",
-        response=httpx.Response(429),
+        response=response,
         body={},
     )
 
@@ -427,8 +429,9 @@ def test_validate_retry_does_not_mark_failed(monkeypatch):
     mock_self.retry.side_effect = Exception("celery retry signal")
 
     with pytest.raises(Exception, match="celery retry signal"):
-        validate_results.run(mock_self, "test-job-id")
+        validate_results.run.__func__(mock_self, "test-job-id")
 
+    mock_self.retry.assert_called_once()
     assert not mark_failed_calls, "_mark_failed should not be called during retry"
 
 
@@ -454,6 +457,6 @@ def test_validate_mark_failed_at_max_retries(monkeypatch):
     mock_self.retry.side_effect = Exception("celery retry signal")
 
     with pytest.raises(Exception, match="celery retry signal"):
-        validate_results.run(mock_self, "test-job-id")
+        validate_results.run.__func__(mock_self, "test-job-id")
 
     assert "test-job-id" in mark_failed_calls

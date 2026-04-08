@@ -6,15 +6,16 @@
 
 ## 전체 구조 (gpu_server.json 기준)
 
-> 아래 예시는 v2 목표 구조. 실제 파일(`checks/profiles/gpu_server.json`)은
-> `inspect.py` v2 리팩토링(C-4) 완료 후 재작성 예정.
-
 ```json
 {
   "profile_name": "gpu_server",
   "pre_install": {
     "baseline": ["pciutils", "nvme-cli", "ipmitool", "lm-sensors", "smartmontools"],
     "stress_tools": ["stress-ng"]
+  },
+  "stress_config": {
+    "driver_version": "580",
+    "cuda_version": "13"
   },
   "phases": {
     "preflight": {
@@ -72,6 +73,23 @@
 
 - `baseline` → Preflight 직전 설치
 - `stress_tools` → Post-install 직전 설치
+
+## stress_config
+
+GPU 스트레스 테스트를 위한 임시 설치 설정. `sw_requirements`에 관계없이 항상 참조.
+
+| 키 | 의미 |
+|----|------|
+| `driver_version` | nvidia-driver 임시 설치 버전 (예: `"580"` → `apt install nvidia-driver-580`) |
+| `cuda_version` | CUDA toolkit 임시 설치 버전 (예: `"13"` → `apt install cuda-toolkit-13`) |
+
+**적용 조건 (inspect.py 구현)**:
+- GPU 감지됨 + driver 미설치 → Preflight에서 임시 설치 + 재부팅
+- GPU 감지됨 + CUDA 미설치 → Post-install 시작 시 임시 설치
+- 임시 설치 목록: NFS `results/{job_id}/temp_packages.json` 저장
+- Cleanup에서 `apt purge`로 제거
+
+GPU 없는 서버(lspci에 NVIDIA 없음)는 이 설정 전체 스킵.
 
 ## cleanup 정책
 

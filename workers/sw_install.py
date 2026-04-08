@@ -80,6 +80,26 @@ def _nfs_sw_dir(job_id: str) -> Path:
     return Path(settings.nfs_base_path) / "results" / job_id / "sw_install_raw"
 
 
+def _nfs_temp_packages_path(job_id: str) -> Path:
+    return Path(settings.nfs_base_path) / "results" / job_id / "temp_packages.json"
+
+
+def _save_temp_packages(job_id: str, packages: list[str]) -> None:
+    path = _nfs_temp_packages_path(job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(packages))
+
+
+def _load_temp_packages(job_id: str) -> list[str]:
+    path = _nfs_temp_packages_path(job_id)
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
 def _ssh_key_path(target_host: str) -> str | None:
     key_dir = Path(settings.ssh_key_dir)
     for candidate in [key_dir / target_host, key_dir / "default"]:
@@ -142,15 +162,18 @@ async def _mark_failed(job_id: str, message: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _build_connect_kwargs(target_host: str, target_user: str) -> dict:
+def _build_connect_kwargs(target_host: str, target_user: str, password: str | None = None) -> dict:
     kwargs: dict = {
         "host": target_host,
         "username": target_user,
         "known_hosts": None,  # TODO(W-3): known_hosts 명시 경로로 교체
     }
-    key_path = _ssh_key_path(target_host)
-    if key_path:
-        kwargs["client_keys"] = [key_path]
+    if password:
+        kwargs["password"] = password
+    else:
+        key_path = _ssh_key_path(target_host)
+        if key_path:
+            kwargs["client_keys"] = [key_path]
     return kwargs
 
 
@@ -216,6 +239,21 @@ async def _detect_has_nvidia_gpu(conn: asyncssh.SSHClientConnection) -> bool:
         result2 = await conn.run("lspci | grep -i nvidia", check=False)
         return bool((result2.stdout or "").strip())
     return True
+
+
+async def _check_driver_installed(conn: asyncssh.SSHClientConnection) -> bool:
+    """nvidia-smi 응답 확인 → driver 설치 여부."""
+    result = await conn.run(
+        "nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null",
+        check=False,
+    )
+    return result.exit_status == 0 and bool((result.stdout or "").strip())
+
+
+async def _check_cuda_installed(conn: asyncssh.SSHClientConnection) -> bool:
+    """nvcc 실행 가능 → CUDA toolkit 설치 여부."""
+    result = await conn.run("nvcc --version 2>/dev/null", check=False)
+    return result.exit_status == 0
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +353,7 @@ systemctl disable --now apt-daily.timer 2>/dev/null || true
 systemctl disable --now apt-daily-upgrade.timer 2>/dev/null || true
 DEBIAN_FRONTEND=noninteractive apt-get purge -y unattended-upgrades 2>&1 || true
 apt-mark hold linux-image-$(uname -r) linux-headers-$(uname -r) 2>&1 || true
+systemctl mask sleep.target 2>&1 || true
 echo "auto_update_disabled"
 """
     ok, out = await _run_sudo(conn, script, secret, timeout=60)
@@ -1051,7 +1090,9 @@ async def _async_sw_install(
             i.get("name") == "nvidia_driver" and i.get("type") == "sw_install" for i in items
         )
 
-        connect_kwargs = _build_connect_kwargs(target_host, target_user)
+        connect_kwargs = _build_connect_kwargs(
+            target_host, target_user, secret.get_secret_value() if secret else None
+        )
         grub_only_reboot_triggered = False
 
         # ── 1차 SSH 세션: sys_config + pre-reboot 항목 ──────────────────────
@@ -1341,7 +1382,9 @@ async def _async_sw_install(
                 failed_step=failure_summary,
             )
             if agent_r.get("plan"):
-                connect_kwargs2 = _build_connect_kwargs(target_host, target_user)
+                connect_kwargs2 = _build_connect_kwargs(
+                    target_host, target_user, secret.get_secret_value() if secret else None
+                )
                 async with asyncssh.connect(**connect_kwargs2) as conn:
                     ok, detail = await _execute_agent_plan(conn, secret, agent_r["plan"])
                 if ok:
