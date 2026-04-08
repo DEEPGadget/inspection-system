@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from config.settings import settings
 from workers.app import app
 from workers.notify import publish_job_status
-from workers.ssh_client import secret_input, wrap_password
+from workers.ssh_client import wrap_password
 
 log = structlog.get_logger(__name__)
 
@@ -120,15 +120,18 @@ async def _mark_failed(job_id: str, message: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _build_connect_kwargs(target_host: str, target_user: str) -> dict:
+def _build_connect_kwargs(target_host: str, target_user: str, password: str | None = None) -> dict:
     kwargs: dict = {
         "host": target_host,
         "username": target_user,
         "known_hosts": None,  # TODO(W-3): known_hosts 명시 경로로 교체
     }
-    key_path = _ssh_key_path(target_host)
-    if key_path:
-        kwargs["client_keys"] = [key_path]
+    if password:
+        kwargs["password"] = password
+    else:
+        key_path = _ssh_key_path(target_host)
+        if key_path:
+            kwargs["client_keys"] = [key_path]
     return kwargs
 
 
@@ -142,7 +145,7 @@ async def _apt_install(
     cmd = f"DEBIAN_FRONTEND=noninteractive sudo -S apt-get install -y {pkg_str} 2>&1"
     result = await conn.run(
         cmd,
-        input=secret_input(secret),
+        input=secret.get_secret_value() if secret else None,
         check=False,
         timeout=timeout,
     )
@@ -295,41 +298,153 @@ async def _async_preflight(
             await _update_job(session, job_id, status="preflight")
         await publish_job_status(job_id, "preflight")
 
-        connect_kwargs = _build_connect_kwargs(target_host, target_user)
+        connect_kwargs = _build_connect_kwargs(
+            target_host, target_user, secret.get_secret_value() if secret else None
+        )
         log.info("preflight.ssh_connect", host=target_host)
 
-        async with asyncssh.connect(**connect_kwargs) as conn:
-            remote_tmp = f"/tmp/inspection_{job_id[:8]}"
-            await conn.run(f"mkdir -p {remote_tmp}", check=True)
+        phase_cfg = profile.get("phases", {}).get("preflight", {})
+        scripts: list[str] = phase_cfg.get("scripts", [])
+        phase_env: dict[str, str] = dict(phase_cfg.get("env", {}))
+        if secret:
+            phase_env["SUDO_PASSWORD"] = secret.get_secret_value()
 
-            # baseline 패키지 설치
-            baseline = profile.get("pre_install", {}).get("baseline", [])
-            if baseline and secret:
-                log.info("preflight.baseline_install", packages=baseline)
-                ok, output = await _apt_install(conn, baseline, secret)
-                if not ok:
-                    log.warning("preflight.baseline_failed", output=output[:200])
-            elif baseline and not secret:
-                log.warning("preflight.baseline_skip", reason="sudo_password not provided")
+        stress_cfg = profile.get("stress_config", {})
+        driver_version = stress_cfg.get("driver_version", "580")
 
-            phase_cfg = profile.get("phases", {}).get("preflight", {})
-            scripts: list[str] = phase_cfg.get("scripts", [])
-            phase_env: dict[str, str] = dict(phase_cfg.get("env", {}))
-            if secret:
-                phase_env["SUDO_PASSWORD"] = secret.get_secret_value()
+        reboot_needed = False  # GRUB 변경 또는 driver 임시 설치로 인한 재부팅 여부
+        reboot_triggered = False  # _do_reboot 실제 완료 여부 (네트워크 오류 구분용)
+        temp_packages: list[str] = []
+        success = False
 
-            success = await _run_phase_scripts(
-                conn,
-                job_id,
-                "preflight",
-                scripts,
-                phase_env,
-                int(phase_cfg.get("timeout", 300)),
-                raw_dir,
-                SessionLocal,
-            )
+        # ── 세션 1: baseline + sys-config + 임시 driver 설치 ─────────────────
+        try:
+            async with asyncssh.connect(**connect_kwargs) as conn:
+                remote_tmp = f"/tmp/inspection_{job_id[:8]}"
+                await conn.run(f"mkdir -p {remote_tmp}", check=True)
 
-            await conn.run(f"rm -rf {remote_tmp}", check=False)
+                # baseline 패키지 설치
+                baseline = profile.get("pre_install", {}).get("baseline", [])
+                if baseline and secret:
+                    log.info("preflight.baseline_install", packages=baseline)
+                    ok, output = await _apt_install(conn, baseline, secret)
+                    if not ok:
+                        log.warning("preflight.baseline_failed", output=output[:200])
+                elif baseline and not secret:
+                    log.warning("preflight.baseline_skip", reason="sudo_password not provided")
+
+                # sys-config 전체 적용 (sw_requirements 유무 무관)
+                from workers.sw_install import (
+                    _apply_sys_config,
+                    _check_driver_installed,
+                    _detect_cpu_vendor,
+                    _detect_has_nvidia_gpu,
+                    _detect_os,
+                    _do_reboot,
+                    _install_nvidia_driver,
+                    _poll_ssh_reconnect,
+                    _save_temp_packages,
+                )
+
+                os_info = await _detect_os(conn)
+                if os_info.get("id") == "ubuntu":
+                    cpu_vendor = await _detect_cpu_vendor(conn)
+                    has_nvidia = await _detect_has_nvidia_gpu(conn)
+                    log.info(
+                        "preflight.sys_config",
+                        cpu_vendor=cpu_vendor,
+                        has_nvidia=has_nvidia,
+                    )
+                    sys_results = await _apply_sys_config(conn, secret, cpu_vendor, has_nvidia)
+                    grub_updated = any(
+                        r.get("name") == "sys_config_grub" and "grub_updated" in r.get("detail", "")
+                        for r in sys_results
+                    )
+                    if grub_updated:
+                        reboot_needed = True
+                        log.info("preflight.grub_update.pending_reboot", job_id=job_id)
+
+                    # GPU 있고 driver 미설치 → 임시 설치 (재부팅은 아래에서 통합)
+                    if has_nvidia and secret:
+                        driver_ok = await _check_driver_installed(conn)
+                        if not driver_ok:
+                            log.info(
+                                "preflight.temp_driver_install",
+                                version=driver_version,
+                                job_id=job_id,
+                            )
+                            ok, out = await _install_nvidia_driver(
+                                conn, secret, driver_version, os_info
+                            )
+                            if ok:
+                                temp_packages.append(f"nvidia-driver-{driver_version}")
+                                _save_temp_packages(job_id, temp_packages)
+                                reboot_needed = True
+                                log.info(
+                                    "preflight.temp_driver_installed",
+                                    pkg=f"nvidia-driver-{driver_version}",
+                                )
+                            else:
+                                log.warning("preflight.temp_driver_failed", out=out[:200])
+                else:
+                    log.info(
+                        "preflight.sys_config.skip",
+                        reason="non-ubuntu",
+                        os_id=os_info.get("id"),
+                    )
+
+                # 재부팅 필요 없으면 스크립트를 같은 세션에서 실행
+                if not reboot_needed:
+                    success = await _run_phase_scripts(
+                        conn,
+                        job_id,
+                        "preflight",
+                        scripts,
+                        phase_env,
+                        int(phase_cfg.get("timeout", 300)),
+                        raw_dir,
+                        SessionLocal,
+                    )
+                    await conn.run(f"rm -rf {remote_tmp}", check=False)
+                else:
+                    # GRUB + driver 설치를 단일 재부팅으로 통합
+                    log.info("preflight.single_reboot.trigger", job_id=job_id)
+                    await _do_reboot(conn, secret)
+                    reboot_triggered = True
+
+        except asyncssh.DisconnectError:
+            if not reboot_triggered:
+                raise  # 예상치 못한 연결 끊김 (reboot 미발생 상태)
+
+        # ── 재부팅 후 세션 2: preflight 스크립트 실행 ────────────────────────
+        if reboot_needed:
+            async with SessionLocal() as session:
+                await _update_job(session, job_id, status="rebooting")
+            await publish_job_status(job_id, "rebooting")
+            log.info("preflight.reboot.waiting", job_id=job_id)
+            new_conn = await _poll_ssh_reconnect(connect_kwargs, timeout=300, interval=10)
+            if new_conn is None:
+                await _mark_failed(
+                    job_id,
+                    "reboot_timeout: server did not respond within 300s after reboot",
+                )
+                _dispatch_cleanup(job_id, target_host, target_user, product_profile, sudo_password)
+                return
+
+            async with new_conn:
+                remote_tmp = f"/tmp/inspection_{job_id[:8]}"
+                await new_conn.run(f"mkdir -p {remote_tmp}", check=True)
+                success = await _run_phase_scripts(
+                    new_conn,
+                    job_id,
+                    "preflight",
+                    scripts,
+                    phase_env,
+                    int(phase_cfg.get("timeout", 300)),
+                    raw_dir,
+                    SessionLocal,
+                )
+                await new_conn.run(f"rm -rf {remote_tmp}", check=False)
 
         if not success:
             await _mark_failed(job_id, "preflight script execution failed")
@@ -429,7 +544,9 @@ async def _async_post_install(
             await _update_job(session, job_id, status="post_install")
         await publish_job_status(job_id, "post_install")
 
-        connect_kwargs = _build_connect_kwargs(target_host, target_user)
+        connect_kwargs = _build_connect_kwargs(
+            target_host, target_user, secret.get_secret_value() if secret else None
+        )
         log.info("post_install.ssh_connect", host=target_host)
 
         async with asyncssh.connect(**connect_kwargs) as conn:
@@ -445,6 +562,37 @@ async def _async_post_install(
                     log.warning("post_install.stress_tools_failed", output=output[:200])
             elif stress_tools and not secret:
                 log.warning("post_install.stress_tools_skip", reason="sudo_password not provided")
+
+            # GPU 있고 CUDA 미설치 → 임시 CUDA 설치 (stress_gpu.py gpu_burn 실행 전제)
+            from workers.sw_install import (
+                _check_cuda_installed,
+                _detect_has_nvidia_gpu,
+                _install_cuda,
+                _load_temp_packages,
+                _save_temp_packages,
+            )
+
+            stress_cfg = profile.get("stress_config", {})
+            cuda_version = stress_cfg.get("cuda_version", "13")
+            has_nvidia = await _detect_has_nvidia_gpu(conn)
+            if has_nvidia and secret:
+                cuda_ok = await _check_cuda_installed(conn)
+                if not cuda_ok:
+                    log.info(
+                        "post_install.temp_cuda_install",
+                        version=cuda_version,
+                        job_id=job_id,
+                    )
+                    ok, out = await _install_cuda(conn, secret, cuda_version)
+                    if ok:
+                        ver_str = cuda_version.replace(".", "-")
+                        pkg = f"cuda-toolkit-{ver_str}"
+                        temp_pkgs = _load_temp_packages(job_id)
+                        temp_pkgs.append(pkg)
+                        _save_temp_packages(job_id, temp_pkgs)
+                        log.info("post_install.temp_cuda_installed", pkg=pkg)
+                    else:
+                        log.warning("post_install.temp_cuda_failed", out=out[:200])
 
             phase_cfg = profile.get("phases", {}).get("post_install", {})
             scripts: list[str] = phase_cfg.get("scripts", [])
@@ -545,7 +693,9 @@ async def _async_collect(
             phase_env["SUDO_PASSWORD"] = secret.get_secret_value()
 
         if scripts:
-            connect_kwargs = _build_connect_kwargs(target_host, target_user)
+            connect_kwargs = _build_connect_kwargs(
+                target_host, target_user, secret.get_secret_value() if secret else None
+            )
             log.info("collect.ssh_connect", host=target_host)
             try:
                 async with asyncssh.connect(**connect_kwargs) as conn:
@@ -647,19 +797,25 @@ async def _async_cleanup(
             await _update_job(session, job_id, status="cleanup")
         await publish_job_status(job_id, "cleanup")
 
-        connect_kwargs = _build_connect_kwargs(target_host, target_user)
+        connect_kwargs = _build_connect_kwargs(
+            target_host, target_user, secret.get_secret_value() if secret else None
+        )
         log.info("cleanup.ssh_connect", host=target_host)
+
+        from workers.sw_install import _load_temp_packages
+
+        temp_packages = _load_temp_packages(job_id)
 
         try:
             async with asyncssh.connect(**connect_kwargs) as conn:
-                # 패키지 제거
+                # 프로파일 지정 패키지 제거
                 remove_packages: list[str] = cleanup_cfg.get("remove_packages", [])
                 if remove_packages and secret:
                     pkg_str = " ".join(remove_packages)
                     cmd = f"sudo -S apt-get remove -y {pkg_str} 2>&1"
                     result = await conn.run(
                         cmd,
-                        input=secret_input(secret),
+                        input=secret.get_secret_value() if secret else None,
                         check=False,
                         timeout=120,
                     )
@@ -672,6 +828,27 @@ async def _async_cleanup(
                 elif remove_packages and not secret:
                     log.warning("cleanup.pkg_skip", reason="sudo_password not provided")
 
+                # 임시 설치 패키지 제거 (driver/CUDA)
+                if temp_packages and secret:
+                    pkg_str = " ".join(temp_packages)
+                    cmd = f"DEBIAN_FRONTEND=noninteractive sudo -S apt-get purge -y {pkg_str} 2>&1"
+                    result = await conn.run(
+                        cmd,
+                        input=secret.get_secret_value() if secret else None,
+                        check=False,
+                        timeout=300,
+                    )
+                    if result.exit_status != 0:
+                        log.warning(
+                            "cleanup.temp_pkg_remove_failed",
+                            packages=temp_packages,
+                            stderr=(result.stderr or "")[:200],
+                        )
+                    else:
+                        log.info("cleanup.temp_pkg_removed", packages=temp_packages)
+                elif temp_packages and not secret:
+                    log.warning("cleanup.temp_pkg_skip", reason="sudo_password not provided")
+
                 # 디렉토리 제거
                 for dir_path in cleanup_cfg.get("remove_dirs", []):
                     if not dir_path.startswith("/opt/"):
@@ -679,7 +856,7 @@ async def _async_cleanup(
                         continue
                     result = await conn.run(
                         f"sudo -S rm -rf {dir_path}",
-                        input=secret_input(secret),
+                        input=secret.get_secret_value() if secret else None,
                         check=False,
                         timeout=30,
                     )

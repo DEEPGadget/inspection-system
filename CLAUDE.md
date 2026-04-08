@@ -17,13 +17,14 @@ FastAPI + Celery + Redis + PostgreSQL + NFS.
 [User: WebGUI/API] → job 제출 (서버정보 + 기대스펙 + H/W수동검수 + SW요구사항.md)
         |
         v
-[System: Preflight Runner] baseline 설치 → 설치비의존 항목 점검  [q_inspect]
+[System: Preflight Runner] baseline 설치 → sys-config 적용 → 설치비의존 항목 점검  [q_inspect]
+        | sys-config: GRUB + 임시 driver 설치 시 단일 재부팅
         | 실행 에러 시에만 → [Inspect Agent]
         v
 [System: SW Install Runner] SW요구사항.md 기반 설치             [q_sw_install]
         | 비정형/실패 시에만 → [SW Planner Agent]   (SW 요구사항 없으면 skip)
         v
-[System: Post-install Runner] stress_tools 설치 → 본검수 + Stress  [q_inspect]
+[System: Post-install Runner] stress_tools + 임시 CUDA 설치 → 본검수 + Stress  [q_inspect]
         v
 [System: Rule Validator] threshold 기반 PASS/FAIL               [q_validate]
         | 경계값/복합WARN 시에만 → [Verify Agent]

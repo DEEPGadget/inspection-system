@@ -1,11 +1,10 @@
 # 필수 시스템 설정 규칙
 
-SW Planner Agent가 수행해야 하는 필수 시스템 설정.  
 **Ubuntu 기준으로 작성, Rocky 차이는 각 항목에 명시.**
 
-SW Install 단계(`q_sw_install`) 내에서 항상 적용 — `sw_requirements.md`에 명시 여부와 관계없이.  
-단, SW Install 단계 자체가 skip되는 경우(sw_requirements 없음)에는 미적용.  
-설정 적용 후 재부팅은 별도 reboot 처리 정책(sw-install.md) 따름.
+**Preflight 단계(`q_inspect`) 내에서 항상 적용** — `sw_requirements.md` 유무 무관.  
+SW Install 단계(`q_sw_install`)에서도 적용하나 GRUB은 멱등성 보장(already_applied 시 스킵).  
+재부팅: Preflight 내 **단일 재부팅**으로 처리 (GRUB 변경 + driver 임시 설치를 한 번에 통합).
 
 ---
 
