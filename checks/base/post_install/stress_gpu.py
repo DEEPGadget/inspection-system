@@ -73,7 +73,8 @@ def classify_gpu(gpu_names: list[str]) -> str:
     if not gpu_names:
         return "unknown"
     for name in gpu_names:
-        if "geforce" in name.lower():
+        name_lower = name.lower()
+        if "geforce" in name_lower or "titan" in name_lower:
             return "gaming"
     return "datacenter"
 

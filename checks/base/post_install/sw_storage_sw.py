@@ -160,7 +160,7 @@ def main():
                 f"nvme_count={len(nvme_devices)}",
                 f"nvme_critical={nvme_critical_count}",
                 f"nvme_wear_high={nvme_wear_high_count}",
-                f"nvme_cli={'available' if nvme_cli_available else 'missing'}",
+                f"nvme_cli={'available' if nvme_cli_available else ('sudo_error' if nvme_cli_present else 'missing')}",
                 f"sata_count={len(non_nvme_disks)}",
                 f"sata_checked={sata_checked_count}",
                 f"sata_failed={sata_failed_count}",
