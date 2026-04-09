@@ -37,7 +37,7 @@ stdout에 JSON 한 줄만 출력. 디버그는 stderr.
 | preflight | `sw_power_mgmt.py` | sleep.target·CPU governor·C-state |
 | preflight | `sw_auto_update.py` | unattended-upgrades 비활성화 확인 |
 | post_install | `sw_gpu_sw.py` | nvidia-smi — driver·VRAM·온도·ECC·NVLink |
-| post_install | `sw_storage_sw.py` | nvme-cli/smartctl — NVMe 헬스·SMART. nvme 장치 + nvme-cli 부재 시 즉시 fail (사유 포함) |
+| post_install | `sw_storage_sw.py` | nvme-cli/smartctl — NVMe 헬스·SMART. nvme 장치 존재 + nvme-cli 미설치 시 즉시 fail (사유 포함) |
 | post_install | `stress_gpu.py` | gpu_burn 전용. `~/gpu-burn` 빌드(`git clone` + `make`, sudo 불필요), `gpu_burn -d -tc <duration>` 실행. 단계별 실패 사유(stderr 마지막 5줄) 명시 |
 | post_install | `stress_cpu.py` | CPU 부하 테스트 (기본 120s) |
 | post_install | `nccl_bandwidth.py` | nccl-tests 전용. `~/nccl-tests` 빌드, `all_reduce_perf` 실행. 빌드/측정 실패 시 사유 포함 fail |
