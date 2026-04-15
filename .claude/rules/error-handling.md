@@ -22,6 +22,7 @@ Preflight → SW Install → Post-install → Rule Validate → Cleanup → Repo
 - SW Install 실패 시 Post-install을 **반드시 건너뜀** (SW 없는 상태에서 본검수 불가)
 - Cleanup 실패는 `on_failure: "warn"` 처리 (프로파일 cleanup 정책 따름, job 상태에 영향 없음)
 - Report 실패는 `job.status = "report_failed"` 로 확정. `check_results` 개별 판정·로그는 그대로 유지 (검수 결과 자체는 유효)
+- **Preflight baseline 설치 실패는 즉시 `failed`** (silent 진행 금지). `_install_and_verify_baseline()`이 `dpkg -s`로 패키지별 검증 → 1개라도 누락 시 `check_results`에 `baseline_install` 항목 기록 후 `_mark_failed` + `_dispatch_cleanup`. apt 설치 실패: `installed/missing/apt_tail` 기록. `sudo_password` 미제공: `installed/missing/reason` 기록 (`apt_tail` 없음).
 
 ---
 
