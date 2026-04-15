@@ -5,7 +5,9 @@ Phase4: 부하 중 온도/전력/Utilization/Slowdown/ECC 모니터링
 기대 동작:
   1. ~/gpu-burn/gpu_burn 바이너리 확인
   2. 없으면 git clone → make 빌드 (~ 하위, sudo 불필요)
-  3. gpu_burn -d -tc <duration> 실행 (FP64 + Tensor Core)
+  3. GPU 클래스 판별 (nvidia-smi name):
+     - 게이밍(GeForce) → `gpu_burn <duration>` (옵션 없음)
+     - 데이터센터(A/H/L/T/V100, RTX A/PRO, Tesla, Quadro 등) → `gpu_burn -tc <duration>`
   4. 빌드/실행 실패 시 사유(stderr 마지막 5줄)와 함께 fail 반환
 
 환경변수:
@@ -63,6 +65,20 @@ def emit(status, details):
     sys.exit(0)
 
 
+def classify_gpu(gpu_names: list[str]) -> str:
+    """GPU 이름 목록으로 클래스 판별.
+    GeForce 1장이라도 포함 → gaming (보수적: tensor core 경로 회피).
+    전부 데이터센터/프로급 → datacenter.
+    """
+    if not gpu_names:
+        return "unknown"
+    for name in gpu_names:
+        name_lower = name.lower()
+        if "geforce" in name_lower or "titan" in name_lower:
+            return "gaming"
+    return "datacenter"
+
+
 def ensure_gpu_burn(details: list[str]) -> str | None:
     """gpu_burn 바이너리 경로 반환. 확보 실패 시 details에 사유 추가하고 None 반환."""
     # 1) 이미 있으면 그대로 사용
@@ -107,12 +123,17 @@ def main():
     if not out:
         emit("fail", ["FAIL:nvidia-smi not found"])
 
-    # GPU 수량
-    gpu_names = run("nvidia-smi --query-gpu=name --format=csv,noheader", timeout=10)
-    gpu_count = len([line for line in gpu_names.splitlines() if line.strip()]) if gpu_names else 0
+    # GPU 수량 + 모델명 수집
+    gpu_names_raw = run("nvidia-smi --query-gpu=name --format=csv,noheader", timeout=10)
+    gpu_name_list = [line.strip() for line in gpu_names_raw.splitlines() if line.strip()]
+    gpu_count = len(gpu_name_list)
     if gpu_count == 0:
         emit("fail", ["FAIL:no GPUs detected"])
     details.append(f"gpu_count={gpu_count}")
+
+    # GPU 클래스 판별 (gaming vs datacenter)
+    gpu_class = classify_gpu(gpu_name_list)
+    details.append(f"gpu_class={gpu_class}")
 
     # TDP
     tdp_raw = run("nvidia-smi --query-gpu=power.limit --format=csv,noheader,nounits", timeout=10)
@@ -148,10 +169,16 @@ def main():
     details.append(f"tool={tool}")
     details.append(f"duration_s={duration}")
 
-    # gpu_burn 실행: -d (FP64) + -tc (Tensor Core) + duration
+    # gpu_burn 실행 — GPU 클래스에 따라 옵션 분기
+    #   gaming: 옵션 없음 (GeForce 계열은 tensor core 풀로드가 비현실적, 전력 오탐 유발)
+    #   datacenter: -tc (Tensor Core) — Ampere/Hopper/PRO/RTX A 등
+    burn_args = [burn_bin]
+    if gpu_class == "datacenter":
+        burn_args.append("-tc")
+    burn_args.append(str(duration))
     try:
         stress_proc = subprocess.Popen(
-            [burn_bin, "-d", "-tc", str(duration)],
+            burn_args,
             cwd=GPU_BURN_DIR,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,

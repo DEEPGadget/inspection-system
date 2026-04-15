@@ -35,8 +35,13 @@ def get_non_nvme_disks() -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
-def check_nvme_smart(device: str) -> dict | None:
-    result = _run(f"nvme smart-log /dev/{device}")
+def check_nvme_smart(device: str, sudo_password: str) -> dict | None:
+    # nvme smart-log는 raw device 접근 권한 필요 → sudo
+    result = _run(
+        f"sudo -S nvme smart-log /dev/{device} 2>/dev/null",
+        timeout=15,
+        stdin_data=sudo_password + "\n" if sudo_password else "",
+    )
     if result.returncode != 0:
         return None
     info: dict = {}
@@ -113,7 +118,7 @@ def main():
         nvme_cli_available = True
 
         for dev in nvme_devices:
-            health = check_nvme_smart(dev)
+            health = check_nvme_smart(dev, sudo_password)
             if health is None:
                 nvme_cli_available = False
                 continue
@@ -155,7 +160,7 @@ def main():
                 f"nvme_count={len(nvme_devices)}",
                 f"nvme_critical={nvme_critical_count}",
                 f"nvme_wear_high={nvme_wear_high_count}",
-                f"nvme_cli={'available' if nvme_cli_available else 'missing'}",
+                f"nvme_cli={'available' if nvme_cli_available else ('sudo_error' if nvme_cli_present else 'missing')}",
                 f"sata_count={len(non_nvme_disks)}",
                 f"sata_checked={sata_checked_count}",
                 f"sata_failed={sata_failed_count}",

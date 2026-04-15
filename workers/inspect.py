@@ -194,11 +194,24 @@ async def _run_script(
     env: dict[str, str] | None = None,
     timeout: int = 300,
 ) -> asyncssh.SSHCompletedProcess:
+    """원격 스크립트 실행.
+
+    env는 커맨드 라인 inline prefix로 주입. asyncssh conn.run(env=) 는 sshd
+    AcceptEnv 화이트리스트에 의해 드롭되므로 신뢰 불가 (대상 sshd는 보통
+    LANG LC_* 만 허용). inline env 는 대상 서버의 프로세스 목록에 잠깐 노출되나
+    같은 서버에 이미 SSH 접속 중이므로 수용 가능.
+    """
+    import shlex
+
     remote_path = f"{remote_tmp}/{local_script.name}"
     async with conn.start_sftp_client() as sftp:
         await sftp.put(str(local_script), remote_path)
         await sftp.chmod(remote_path, 0o755)
-    return await conn.run(f"python3 {remote_path}", env=env or {}, check=False, timeout=timeout)
+    env_prefix = ""
+    if env:
+        env_prefix = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items()) + " "
+    cmd = f"{env_prefix}python3 {remote_path}"
+    return await conn.run(cmd, check=False, timeout=timeout)
 
 
 # ---------------------------------------------------------------------------

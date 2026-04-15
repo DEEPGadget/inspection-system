@@ -124,6 +124,43 @@ def test_mock_build_tools_missing_returns_fail():
     assert "FAIL:gpu_burn_build_tools_missing" in data["detail"]
 
 
+def test_classify_gpu_gaming():
+    """GeForce 계열 → gaming."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("stress_gpu", str(SCRIPT))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.classify_gpu(["NVIDIA GeForce RTX 4090"]) == "gaming"
+    assert mod.classify_gpu(["NVIDIA GeForce RTX 4090"] * 4) == "gaming"
+    # 혼합 시 보수적으로 gaming
+    assert mod.classify_gpu(["NVIDIA GeForce RTX 4090", "NVIDIA H100 80GB HBM3"]) == "gaming"
+
+
+def test_classify_gpu_datacenter():
+    """데이터센터 계열 → datacenter."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("stress_gpu", str(SCRIPT))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.classify_gpu(["NVIDIA H100 80GB HBM3"]) == "datacenter"
+    assert mod.classify_gpu(["NVIDIA A100-SXM4-80GB"]) == "datacenter"
+    assert mod.classify_gpu(["NVIDIA RTX A6000"]) == "datacenter"
+    assert mod.classify_gpu(["NVIDIA RTX 6000 Ada Generation"]) == "datacenter"
+    assert mod.classify_gpu(["NVIDIA RTX PRO 6000 Blackwell"]) == "datacenter"
+    assert mod.classify_gpu(["Tesla V100-SXM2-32GB"]) == "datacenter"
+
+
+def test_classify_gpu_empty():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("stress_gpu", str(SCRIPT))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.classify_gpu([]) == "unknown"
+
+
 def test_mock_clone_failed_returns_fail():
     """gpu_burn git clone 실패 시 사유 포함."""
     sample = (
