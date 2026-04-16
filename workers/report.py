@@ -405,7 +405,7 @@ async def _async_generate_report(job_id: str) -> None:
             warn_reasons = [
                 f"{cr.check_name}: {cr.detail[:120]}" for cr in check_results if cr.status == "warn"
             ]
-            overall = "fail" if fail_reasons else "pass"
+            overall = "fail" if fail_reasons else "warn" if warn_reasons else "fail"
             summary = ""
 
         # ── 3. 렌더링 컨텍스트 구성 ───────────────────────────

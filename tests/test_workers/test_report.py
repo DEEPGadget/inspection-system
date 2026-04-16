@@ -342,3 +342,76 @@ async def test_async_generate_report_rejected_verdict_sets_status_rejected(tmp_p
 
     last_call_args = mock_update.call_args_list[-1]
     assert last_call_args.args[2] == "rejected"
+
+
+def _fake_job_fixture(job_id: str) -> MagicMock:
+    fake_job = MagicMock()
+    fake_job.id = uuid.UUID(job_id)
+    fake_job.target_host = "10.0.0.1"
+    fake_job.target_user = "root"
+    fake_job.product_profile = "gpu_server"
+    fake_job.created_at = MagicMock()
+    fake_job.created_at.strftime.return_value = "2026-03-25 12:00:00 UTC"
+    return fake_job
+
+
+@pytest.mark.asyncio
+async def test_fallback_warn_only_yields_failed_not_pass(tmp_path):
+    """회귀: verdict 없을 때 warn-only check_results → overall='warn' → status='failed' (pass 아님)."""
+    job_id = str(uuid.uuid4())
+
+    warn_result = MagicMock()
+    warn_result.check_name = "sw_gpu_sw"
+    warn_result.status = "warn"
+    warn_result.detail = "gpu_max_temp_c=80"
+    warn_result.claude_verdict = None
+
+    with (
+        patch("workers.report.settings") as mock_settings,
+        patch("workers.report._load_job_and_results", new_callable=AsyncMock) as mock_load,
+        patch("workers.report._save_report_record", new_callable=AsyncMock),
+        patch("workers.report._update_job_status", new_callable=AsyncMock) as mock_update,
+        patch("workers.report.publish_job_status", new_callable=AsyncMock),
+        patch("workers.report._render_pdf"),
+        patch("workers.report._render_xlsx"),
+        patch("workers.report._make_session", return_value=(AsyncMock(), MagicMock())),
+    ):
+        mock_settings.nfs_base_path = str(tmp_path)
+        mock_load.return_value = (_fake_job_fixture(job_id), [warn_result])
+
+        from workers.report import _async_generate_report
+
+        await _async_generate_report(job_id)
+
+    # warn-only → overall="warn" → _verdict_to_status 미포함 → default "failed"
+    last_call_args = mock_update.call_args_list[-1]
+    assert last_call_args.args[2] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_fallback_empty_check_results_yields_failed_not_pass(tmp_path):
+    """회귀: verdict 없고 check_results 비어있을 때 overall='fail' → status='failed' (pass 아님).
+
+    preflight 실패로 스크립트가 하나도 안 돌았을 때의 케이스.
+    """
+    job_id = str(uuid.uuid4())
+
+    with (
+        patch("workers.report.settings") as mock_settings,
+        patch("workers.report._load_job_and_results", new_callable=AsyncMock) as mock_load,
+        patch("workers.report._save_report_record", new_callable=AsyncMock),
+        patch("workers.report._update_job_status", new_callable=AsyncMock) as mock_update,
+        patch("workers.report.publish_job_status", new_callable=AsyncMock),
+        patch("workers.report._render_pdf"),
+        patch("workers.report._render_xlsx"),
+        patch("workers.report._make_session", return_value=(AsyncMock(), MagicMock())),
+    ):
+        mock_settings.nfs_base_path = str(tmp_path)
+        mock_load.return_value = (_fake_job_fixture(job_id), [])
+
+        from workers.report import _async_generate_report
+
+        await _async_generate_report(job_id)
+
+    last_call_args = mock_update.call_args_list[-1]
+    assert last_call_args.args[2] == "failed"
