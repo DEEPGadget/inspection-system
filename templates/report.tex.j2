@@ -22,6 +22,10 @@
 \definecolor{warntext}{HTML}{856404}
 \definecolor{summarybg}{HTML}{E8F4F8}
 \definecolor{rowgray}{HTML}{F8F9FA}
+\definecolor{preflight}{HTML}{1A3A5C}
+\definecolor{postinstall}{HTML}{2D6A4F}
+\definecolor{collectphase}{HTML}{5C4B1A}
+\definecolor{unknownphase}{HTML}{555555}
 
 \pagestyle{fancy}
 \fancyhf{}
@@ -30,6 +34,14 @@
 
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{6pt}
+
+%% 상태별 행 색상 매크로
+\newcommand{\statusbadge}[1]{%
+  \ifnum\pdfstrcmp{#1}{pass}=0\textcolor{passtext}{\bfseries PASS}%
+  \else\ifnum\pdfstrcmp{#1}{fail}=0\textcolor{failtext}{\bfseries FAIL}%
+  \else\textcolor{warntext}{\bfseries WARN}%
+  \fi\fi%
+}
 
 \begin{document}
 
@@ -46,6 +58,8 @@
     \colorbox{passbg}{\color{passtext}\bfseries\large\enspace PASS\enspace}
   \BLOCK{elif overall == "fail"}
     \colorbox{failbg}{\color{failtext}\bfseries\large\enspace FAIL\enspace}
+  \BLOCK{elif overall == "rejected"}
+    \colorbox{failbg}{\color{failtext}\bfseries\large\enspace REJECTED\enspace}
   \BLOCK{else}
     \colorbox{warnbg}{\color{warntext}\bfseries\large\enspace ERROR\enspace}
   \BLOCK{endif}
@@ -67,7 +81,23 @@
 \end{tabular}
 
 \medskip
-{\bfseries\color{headerblue} 판정 결과}
+
+%% ── Executive Summary ──────────────────────────────────────────────────────
+{\bfseries\color{headerblue} 검수 요약}
+
+\smallskip
+\noindent
+\begin{tabular}{@{}p{0.30\textwidth}@{\hspace{3mm}}p{0.30\textwidth}@{\hspace{3mm}}p{0.30\textwidth}@{}}
+  \colorbox{passbg}{\parbox[c][1.4cm][c]{\dimexpr0.30\textwidth-2\fboxsep\relax}{%
+    \centering\color{passtext}\bfseries\LARGE\VAR{pass_count}\\[2pt]\small PASS
+  }} &
+  \colorbox{warnbg}{\parbox[c][1.4cm][c]{\dimexpr0.30\textwidth-2\fboxsep\relax}{%
+    \centering\color{warntext}\bfseries\LARGE\VAR{warn_count}\\[2pt]\small WARN
+  }} &
+  \colorbox{failbg}{\parbox[c][1.4cm][c]{\dimexpr0.30\textwidth-2\fboxsep\relax}{%
+    \centering\color{failtext}\bfseries\LARGE\VAR{fail_count}\\[2pt]\small FAIL
+  }}
+\end{tabular}
 
 \BLOCK{if fail_reasons}
 \smallskip
@@ -102,24 +132,25 @@
 }}
 \BLOCK{endif}
 
-\medskip
-{\bfseries\color{headerblue} 검수 항목 상세}
+%% ── 검수 항목 상세 (Phase별) ───────────────────────────────────────────────
 
-\smallskip
-\begin{longtable}{>{\small}p{0.20\textwidth}>{\small\centering}p{0.07\textwidth}>{\small}p{0.30\textwidth}>{\small}p{0.33\textwidth}}
-  \rowcolor{headerblue}
+%% 공통 테이블 컬럼 매크로
+%% 스크립트(0.20) | 상태(0.07) | Claude 판정(0.29) | 상세(0.34)
+\newcommand{\checktableheader}{%
+  \rowcolor{headerblue}%
   \textcolor{white}{\bfseries 스크립트} &
   \textcolor{white}{\bfseries 상태} &
   \textcolor{white}{\bfseries Claude 판정} &
   \textcolor{white}{\bfseries 상세} \tabularnewline
+}
+
+\BLOCK{macro render_phase_table(results)}
+\begin{longtable}{>{\small}p{0.20\textwidth}>{\small\centering\arraybackslash}p{0.07\textwidth}>{\small\raggedright\arraybackslash}p{0.29\textwidth}>{\small\raggedright\arraybackslash}p{0.34\textwidth}}
+  \checktableheader
   \endfirsthead
-  \rowcolor{headerblue}
-  \textcolor{white}{\bfseries 스크립트} &
-  \textcolor{white}{\bfseries 상태} &
-  \textcolor{white}{\bfseries Claude 판정} &
-  \textcolor{white}{\bfseries 상세} \tabularnewline
+  \checktableheader
   \endhead
-\BLOCK{for cr in check_results}
+\BLOCK{for cr in results}
   \VAR{cr.check_name | latex_escape} &
   \BLOCK{if cr.status == "pass"}%
     \textcolor{passtext}{\bfseries PASS}%
@@ -129,9 +160,46 @@
     \textcolor{warntext}{\bfseries WARN}%
   \BLOCK{endif} &
   \VAR{(cr.claude_verdict or "—") | latex_escape} &
-  \VAR{cr.detail | detail_latex} \tabularnewline
+  \VAR{cr.display_fields | fields_latex} \tabularnewline
   \hline
 \BLOCK{endfor}
 \end{longtable}
+\BLOCK{endmacro}
+
+\BLOCK{if preflight_results}
+\medskip
+\noindent\colorbox{preflight}{\parbox{\dimexpr\textwidth-2\fboxsep\relax}{%
+  \color{white}\bfseries\enspace Preflight\enspace
+}}
+\smallskip
+\VAR{render_phase_table(preflight_results)}
+\BLOCK{endif}
+
+\BLOCK{if post_install_results}
+\medskip
+\noindent\colorbox{postinstall}{\parbox{\dimexpr\textwidth-2\fboxsep\relax}{%
+  \color{white}\bfseries\enspace Post-install\enspace
+}}
+\smallskip
+\VAR{render_phase_table(post_install_results)}
+\BLOCK{endif}
+
+\BLOCK{if collect_results}
+\medskip
+\noindent\colorbox{collectphase}{\parbox{\dimexpr\textwidth-2\fboxsep\relax}{%
+  \color{white}\bfseries\enspace 로그 수집\enspace
+}}
+\smallskip
+\VAR{render_phase_table(collect_results)}
+\BLOCK{endif}
+
+\BLOCK{if unknown_results}
+\medskip
+\noindent\colorbox{unknownphase}{\parbox{\dimexpr\textwidth-2\fboxsep\relax}{%
+  \color{white}\bfseries\enspace 기타\enspace
+}}
+\smallskip
+\VAR{render_phase_table(unknown_results)}
+\BLOCK{endif}
 
 \end{document}

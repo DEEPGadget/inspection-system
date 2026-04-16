@@ -16,6 +16,24 @@ import pytest
 
 
 def _make_context(overall: str = "pass") -> dict:
+    check_results = [
+        {
+            "check_name": "sw_gpu_hw",
+            "status": "pass",
+            "detail": "gpu_count=4|link_width=16|link_speed=16GT/s",
+            "claude_verdict": "[PASS] 정상",
+            "phase": "preflight",
+            "display_fields": [("gpu_count", "4"), ("link_width", "16"), ("link_speed", "16GT/s")],
+        },
+        {
+            "check_name": "sw_power_mgmt",
+            "status": "fail" if overall == "fail" else "pass",
+            "detail": "sleep_target=active|cpu_governor=performance",
+            "claude_verdict": "[FAIL] 미마스킹" if overall == "fail" else "[PASS] 정상",
+            "phase": "preflight",
+            "display_fields": [("sleep_target", "active"), ("cpu_governor", "performance")],
+        },
+    ]
     return {
         "job_id": "aaaaaaaa-0000-0000-0000-000000000001",
         "target_host": "10.0.0.1",
@@ -27,20 +45,14 @@ def _make_context(overall: str = "pass") -> dict:
         "fail_reasons": ["GPU 온도 92°C > 87°C"] if overall == "fail" else [],
         "warn_reasons": [],
         "summary": "테스트 요약",
-        "check_results": [
-            {
-                "check_name": "sw_gpu",
-                "status": "pass",
-                "detail": "8x A100 OK",
-                "claude_verdict": "[PASS] 정상",
-            },
-            {
-                "check_name": "sw_power_mgmt",
-                "status": "fail" if overall == "fail" else "pass",
-                "detail": "sleep.target not masked",
-                "claude_verdict": "[FAIL] 미마스킹" if overall == "fail" else "[PASS] 정상",
-            },
-        ],
+        "check_results": check_results,
+        "preflight_results": check_results,
+        "post_install_results": [],
+        "collect_results": [],
+        "unknown_results": [],
+        "pass_count": 2 if overall == "pass" else 1,
+        "warn_count": 0,
+        "fail_count": 1 if overall == "fail" else 0,
     }
 
 
@@ -84,7 +96,7 @@ def test_render_xlsx_detail_rows(tmp_path):
     ws = wb["검수 상세"]
     # 헤더(1) + 검수 항목(2)
     assert ws.max_row == 3
-    assert ws.cell(row=2, column=1).value == "sw_gpu"
+    assert ws.cell(row=2, column=1).value == "sw_gpu_hw"
 
 
 def test_render_xlsx_fail_reasons(tmp_path):
