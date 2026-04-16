@@ -11,6 +11,7 @@
 \usepackage{booktabs}
 \usepackage{fancyhdr}
 \usepackage{parskip}
+\usepackage{graphicx}
 \usepackage[hidelinks]{hyperref}
 
 \definecolor{headerblue}{HTML}{1A3A5C}
@@ -176,6 +177,39 @@
 }}
 \smallskip
 \VAR{render_phase_table(post_install_results)}
+
+%% ── 부하 테스트 차트 (시계열) ────────────────────────────────────
+\BLOCK{if chart_gpu_path}
+\medskip
+{\bfseries\color{postinstall} GPU 스트레스 테스트 — 시계열}
+
+\smallskip
+\noindent\includegraphics[width=\textwidth]{\VAR{chart_gpu_path}}
+\BLOCK{endif}
+
+\BLOCK{if chart_gpu_cooling_path}
+\smallskip
+{\bfseries\color{postinstall} 냉각 일관성 — Per-GPU 온도 Heatmap}
+
+\smallskip
+\noindent\includegraphics[width=\textwidth]{\VAR{chart_gpu_cooling_path}}
+\BLOCK{endif}
+
+\BLOCK{if chart_cpu_path}
+\medskip
+{\bfseries\color{postinstall} CPU 스트레스 테스트 — 시계열}
+
+\smallskip
+\noindent\includegraphics[width=\textwidth]{\VAR{chart_cpu_path}}
+\BLOCK{endif}
+
+\BLOCK{if chart_nccl_path}
+\medskip
+{\bfseries\color{postinstall} NCCL 대역폭 — 기준선 대비}
+
+\smallskip
+\noindent\includegraphics[width=0.7\textwidth]{\VAR{chart_nccl_path}}
+\BLOCK{endif}
 \BLOCK{endif}
 
 \BLOCK{if collect_results}

@@ -305,10 +305,23 @@ async def _run_phase_scripts(
         detail = output.get("detail", "")
         check_name = output.get("check", script_name)
 
+        # 시계열 데이터는 별도 파일로 분리 저장 (DB·일반 결과 JSON 용량 절약).
+        # report.py가 {script}_timeseries.json 경로로 직접 읽음.
+        timeseries = output.pop("timeseries", None)
+
         raw_dir.mkdir(parents=True, exist_ok=True)
         (raw_dir / f"{script_name}.json").write_text(
             json.dumps(output, ensure_ascii=False, indent=2)
         )
+        if timeseries is not None:
+            (raw_dir / f"{script_name}_timeseries.json").write_text(
+                json.dumps(timeseries, ensure_ascii=False, indent=2)
+            )
+            log.info(
+                "script.timeseries_saved",
+                script=script_name,
+                sample_count=len(timeseries.get("samples", [])),
+            )
 
         async with SessionLocal() as session:
             await _save_check_result(session, job_id, check_name, status, detail, output)

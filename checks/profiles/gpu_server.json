@@ -47,6 +47,7 @@
       {"check": "sw_gpu_sw",      "metric": "ecc_delta_uncorr",     "fail_above": 0},
       {"check": "nccl_bandwidth", "metric": "bw_2gpu_gbs",          "fail_below": 30,  "agent_zone_below": 25},
       {"check": "nccl_bandwidth", "metric": "bw_4gpu_gbs",          "fail_below": 5,   "agent_zone_below": 3},
+      {"check": "stress_gpu",     "metric": "cooling_consistency_score", "fail_below": 60, "agent_zone_below": 75},
       {"check": "sw_power_mgmt",  "metric": "sleep_target",         "fail_if_not": "masked"},
       {"check": "sw_auto_update", "metric": "unattended_upgrades_active", "fail_if": "active"}
     ],

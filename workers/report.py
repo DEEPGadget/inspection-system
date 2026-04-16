@@ -69,6 +69,10 @@ KNOWN_FIELDS: dict[str, list[str]] = {
         "power_ratio_pct",
         "avg_util_pct",
         "ecc_delta_uncorr",
+        "cooling_consistency_score",
+        "cooling_avg_spread_c",
+        "cooling_max_spread_c",
+        "cooling_outlier_gpus",
     ],
     "stress_cpu": [
         "tool",
@@ -419,6 +423,86 @@ async def _update_job_status(
 
 
 # ---------------------------------------------------------------------------
+# 차트 생성 (시계열 + 집계)
+# ---------------------------------------------------------------------------
+
+
+def _generate_all_charts(
+    job_id: str,
+    enriched_results: list[dict],
+    product_profile: str,
+    report_dir: Path,
+) -> dict[str, str]:
+    """검수 결과의 stress/nccl 차트를 PNG로 생성.
+
+    반환: {"gpu": "/abs/path", "gpu_cooling": ..., "cpu": ..., "nccl": ...}
+    매트플롯립 import 비용은 워커 프로세스당 1회.
+    """
+    from workers import report_charts
+
+    raw_dir = Path(settings.nfs_base_path) / "results" / job_id / "inspect_raw"
+    paths: dict[str, str] = {}
+
+    # 사용자 온도 상한 (profile validation.rules에서 추출)
+    user_temp_limit = _extract_user_temp_limit(product_profile)
+
+    # GPU stress 차트
+    gpu_ts = raw_dir / "stress_gpu_timeseries.json"
+    gpu_chart = report_dir / "chart_stress_gpu.png"
+    if gpu_ts.exists():
+        try:
+            ok = report_charts.generate_gpu_chart(gpu_ts, gpu_chart, user_temp_limit)
+            if ok:
+                paths["gpu"] = str(gpu_chart)
+                cooling = report_dir / "chart_stress_gpu_cooling_heatmap.png"
+                if cooling.exists():
+                    paths["gpu_cooling"] = str(cooling)
+        except Exception as exc:
+            log.warning("report.chart_gpu_failed", job_id=job_id, error=str(exc))
+
+    # CPU stress 차트
+    cpu_ts = raw_dir / "stress_cpu_timeseries.json"
+    cpu_chart = report_dir / "chart_stress_cpu.png"
+    if cpu_ts.exists():
+        try:
+            if report_charts.generate_cpu_chart(cpu_ts, cpu_chart):
+                paths["cpu"] = str(cpu_chart)
+        except Exception as exc:
+            log.warning("report.chart_cpu_failed", job_id=job_id, error=str(exc))
+
+    # nccl bar chart (시계열 아님; enriched에서 detail 파싱)
+    nccl_chart = report_dir / "chart_nccl.png"
+    nccl_result = next((r for r in enriched_results if r["check_name"] == "nccl_bandwidth"), None)
+    if nccl_result:
+        parsed, _ = parse_detail(nccl_result.get("detail") or "")
+        try:
+            if report_charts.generate_nccl_chart(parsed, nccl_chart):
+                paths["nccl"] = str(nccl_chart)
+        except Exception as exc:
+            log.warning("report.chart_nccl_failed", job_id=job_id, error=str(exc))
+
+    log.info("report.charts_generated", job_id=job_id, charts=list(paths.keys()))
+    return paths
+
+
+def _extract_user_temp_limit(product_profile: str) -> float | None:
+    """profile JSON의 validation.rules에서 sw_gpu_sw.gpu_max_temp_c.fail_above 값 추출."""
+    profile_path = _PROFILES_DIR / f"{product_profile}.json"
+    if not profile_path.exists():
+        return None
+    try:
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    for rule in profile.get("validation", {}).get("rules", []):
+        if rule.get("check") == "sw_gpu_sw" and rule.get("metric") == "gpu_max_temp_c":
+            val = rule.get("fail_above")
+            if isinstance(val, (int, float)):
+                return float(val)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 핵심 async 로직
 # ---------------------------------------------------------------------------
 
@@ -481,6 +565,14 @@ async def _async_generate_report(job_id: str) -> None:
 
         all_statuses = [r["status"] for r in enriched]
         generated_at = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
+
+        # ── 차트 생성 (시계열/집계값) ───────────────────────────
+        report_dir = Path(settings.nfs_base_path) / "results" / job_id
+        report_dir.mkdir(parents=True, exist_ok=True)
+        chart_paths = _generate_all_charts(
+            job_id, enriched, job_data["product_profile"], report_dir
+        )
+
         context = {
             **job_data,
             "overall": overall,
@@ -496,11 +588,11 @@ async def _async_generate_report(job_id: str) -> None:
             "pass_count": all_statuses.count("pass"),
             "warn_count": all_statuses.count("warn"),
             "fail_count": all_statuses.count("fail"),
+            "chart_gpu_path": chart_paths.get("gpu"),
+            "chart_gpu_cooling_path": chart_paths.get("gpu_cooling"),
+            "chart_cpu_path": chart_paths.get("cpu"),
+            "chart_nccl_path": chart_paths.get("nccl"),
         }
-
-        # ── 4. NFS 출력 경로 준비 ─────────────────────────────
-        report_dir = Path(settings.nfs_base_path) / "results" / job_id
-        report_dir.mkdir(parents=True, exist_ok=True)
 
         pdf_path = report_dir / "report.pdf"
         xlsx_path = report_dir / "report.xlsx"

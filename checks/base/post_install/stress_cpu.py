@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """stress_cpu — CPU 스트레스 테스트
-Phase4: 부하 중 온도/주파수/Utilization 모니터링
+Phase4: 부하 중 온도/주파수/Utilization 모니터링 + 시계열 로깅
 
 환경변수:
-  CPU_BURNIN_DURATION  부하 지속 시간(초) [기본: 120]
+  CPU_BURNIN_DURATION       부하 지속 시간(초) [기본: 120]
+  STRESS_SAMPLE_INTERVAL    샘플링 간격(초)   [기본: 5]
 
 FAIL: peak_temp > 100°C
-WARN: SW throttle(주파수 강하) | 도구 없음 | util < 80%
-출력: {"check":"stress_cpu","status":"pass|fail|warn","detail":"..."}
+WARN: SW throttle(주파수 강하) | 도구 없음 | util < 80% | 온도 센서 미탐지
+출력: stdout JSON 한 줄 {"check":..., "status":..., "detail":..., "timeseries":{...}}
 """
 
 import json
@@ -28,12 +29,11 @@ def run(cmd, timeout=10):
         return ""
 
 
-def emit(status, details):
-    print(
-        json.dumps(
-            {"check": CHECK, "status": status, "detail": "|".join(details)}, ensure_ascii=False
-        )
-    )
+def emit(status, details, timeseries=None):
+    result = {"check": CHECK, "status": status, "detail": "|".join(details)}
+    if timeseries is not None:
+        result["timeseries"] = timeseries
+    print(json.dumps(result, ensure_ascii=False))
     sys.exit(0)
 
 
@@ -51,8 +51,13 @@ def main():
     status = "pass"
     details = []
     duration = int(os.environ.get("CPU_BURNIN_DURATION", "120"))
+    sample_interval = max(1, int(os.environ.get("STRESS_SAMPLE_INTERVAL", "5")))
     nproc = int(run("nproc") or "1")
-    details += [f"logical_cpus={nproc}", f"duration_s={duration}"]
+    details += [
+        f"logical_cpus={nproc}",
+        f"duration_s={duration}",
+        f"sample_interval_s={sample_interval}",
+    ]
 
     # 스트레스 도구 탐색
     tool = "none"
@@ -143,15 +148,17 @@ def main():
                         continue
                 temp_files.append(temp_input)
 
-    # 모니터링 루프 (5초 간격)
+    # 모니터링 루프
     peak_temp = 0
     min_freq_mhz = 999999
     util_sum = 0
     sample_count = 0
     throttle_count = 0
     stress_died = False
+    timeseries_samples: list[dict] = []
 
-    end_time = time.time() + duration
+    start_time = time.time()
+    end_time = start_time + duration
 
     # 최대 주파수 (한 번만 읽기)
     max_freq_khz = 0
@@ -162,6 +169,9 @@ def main():
     except Exception:
         pass
 
+    # util 측정을 위한 1초 대기를 제외한 순수 sleep 시간
+    remaining_sleep = max(0, sample_interval - 1)
+
     while time.time() < end_time:
         # stress 프로세스 생존 확인
         if stress_proc is not None and stress_proc.poll() is not None:
@@ -169,11 +179,18 @@ def main():
             stress_died = True
             break
 
+        # 이 샘플의 순간값
+        sample_temp: int | None = None
+        sample_freq: int | None = None
+        sample_util: int | None = None
+
         # CPU 온도 수집
         for f in temp_files:
             try:
                 raw = int(f.read_text().strip())
                 temp_c = raw // 1000
+                if sample_temp is None or temp_c > sample_temp:
+                    sample_temp = temp_c
                 if temp_c > peak_temp:
                     peak_temp = temp_c
             except Exception:
@@ -187,6 +204,8 @@ def main():
             if sens_out:
                 try:
                     temp_c = int(float(sens_out.splitlines()[-1]))
+                    if sample_temp is None or temp_c > sample_temp:
+                        sample_temp = temp_c
                     if temp_c > peak_temp:
                         peak_temp = temp_c
                 except Exception:
@@ -198,6 +217,7 @@ def main():
                 open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq").read().strip()
             )
             freq_mhz = freq_khz // 1000
+            sample_freq = freq_mhz
             if freq_mhz < min_freq_mhz:
                 min_freq_mhz = freq_mhz
             if max_freq_khz > 0:
@@ -221,13 +241,24 @@ def main():
                 d_total = total2 - total1
                 if d_total > 0:
                     util = int((1 - d_idle / d_total) * 100)
+                    sample_util = util
                     util_sum += util
                     sample_count += 1
-                time.sleep(4)
+                time.sleep(remaining_sleep)
             else:
-                time.sleep(5)
+                time.sleep(sample_interval)
         else:
-            time.sleep(5)
+            time.sleep(sample_interval)
+
+        # 시계열 샘플 기록
+        timeseries_samples.append(
+            {
+                "t": int(time.time() - start_time),
+                "temp": sample_temp,
+                "freq": sample_freq,
+                "util": sample_util,
+            }
+        )
 
     # stress 정리
     if tool == "python3":
@@ -288,7 +319,11 @@ def main():
             status = "warn"
         details.append("WARN:stress_tool_exited_early")
 
-    emit(status, details)
+    timeseries = {
+        "sample_interval_s": sample_interval,
+        "samples": timeseries_samples,
+    }
+    emit(status, details, timeseries=timeseries)
 
 
 if __name__ == "__main__":
