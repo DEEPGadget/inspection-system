@@ -53,51 +53,78 @@ def get_cpu_freq_ghz():
 
 
 def get_cpu_temp():
-    """Get CPU temperature in Celsius"""
-    try:
-        # Check thermal zones first
-        thermal_zones = glob.glob("/sys/class/thermal/thermal_zone*/type")
-        max_temp = 0
+    """Get CPU package temperature in Celsius.
 
-        for zone_type_path in thermal_zones:
-            try:
-                with open(zone_type_path, "r") as f:
-                    zone_type = f.read().strip()
+    Intel: coretemp 칩의 "Package id N" 레이블.
+    AMD:   k10temp 칩의 Tctl (제어 온도) 또는 Tdie (다이 온도).
+           Tccd* (CCD별 온도)는 노이즈라 제외.
+    탐색 순서: hwmon sysfs → thermal_zone → sensors 명령.
+    """
+    max_temp = 0.0
 
-                # Look for CPU-related thermal zones
-                if zone_type in ["x86_pkg_temp", "acpitz", "cpu"]:
-                    zone_dir = os.path.dirname(zone_type_path)
-                    temp_path = os.path.join(zone_dir, "temp")
-
-                    with open(temp_path, "r") as f:
-                        temp_millicelsius = int(f.read().strip())
-                        temp_celsius = temp_millicelsius / 1000
-                        max_temp = max(max_temp, temp_celsius)
-            except Exception:
-                continue
-
-        if max_temp > 0:
-            return max_temp
-
-        # Fallback to sensors command
+    # 1. hwmon sysfs (most reliable, no subprocess)
+    for name_path in glob.glob("/sys/class/hwmon/hwmon*/name"):
         try:
-            result = subprocess.run(["sensors"], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                for line in result.stdout.split("\n"):
-                    # Look for "Package id N: +XX.X°C" pattern
-                    match = re.search(r"Package id \d+:\s*\+?(\d+\.\d+)°?C", line)
-                    if match:
-                        temp = float(match.group(1))
-                        max_temp = max(max_temp, temp)
-
-                if max_temp > 0:
-                    return max_temp
+            with open(name_path, "r") as f:
+                chip = f.read().strip()
+            if chip not in ("coretemp", "k10temp", "zenpower"):
+                continue
+            hwmon_dir = os.path.dirname(name_path)
+            for temp_input in sorted(glob.glob(f"{hwmon_dir}/temp*_input")):
+                label_path = temp_input.replace("_input", "_label")
+                label = ""
+                if os.path.exists(label_path):
+                    with open(label_path, "r") as f:
+                        label = f.read().strip()
+                # AMD k10temp: Tctl / Tdie만 채택 (Tccd*는 per-CCD 노이즈)
+                if chip in ("k10temp", "zenpower"):
+                    if label and label not in ("Tctl", "Tdie"):
+                        continue
+                # Intel coretemp: "Package id N"만 채택 (Core N은 per-core)
+                elif chip == "coretemp":
+                    if label and not label.startswith("Package"):
+                        continue
+                with open(temp_input, "r") as f:
+                    temp_c = int(f.read().strip()) / 1000
+                    max_temp = max(max_temp, temp_c)
         except Exception:
-            pass
+            continue
 
-        return None
+    if max_temp > 0:
+        return max_temp
+
+    # 2. Legacy thermal_zone (older Intel mobile/desktop)
+    for zone_type_path in glob.glob("/sys/class/thermal/thermal_zone*/type"):
+        try:
+            with open(zone_type_path, "r") as f:
+                zone_type = f.read().strip()
+            if zone_type not in ("x86_pkg_temp", "acpitz", "cpu"):
+                continue
+            temp_path = os.path.join(os.path.dirname(zone_type_path), "temp")
+            with open(temp_path, "r") as f:
+                temp_c = int(f.read().strip()) / 1000
+                max_temp = max(max_temp, temp_c)
+        except Exception:
+            continue
+
+    if max_temp > 0:
+        return max_temp
+
+    # 3. sensors command fallback (AMD Tctl/Tdie + Intel Package)
+    try:
+        result = subprocess.run(["sensors"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            for line in result.stdout.split("\n"):
+                match = re.search(r"(?:Package id \d+|Tctl|Tdie):\s*\+?(\d+\.\d+)°?C", line)
+                if match:
+                    temp = float(match.group(1))
+                    max_temp = max(max_temp, temp)
+            if max_temp > 0:
+                return max_temp
     except Exception:
-        return None
+        pass
+
+    return None
 
 
 def main():

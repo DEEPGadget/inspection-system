@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import openpyxl
@@ -24,6 +24,9 @@ from workers.app import app
 from workers.notify import publish_job_status
 
 log = structlog.get_logger(__name__)
+
+# 리포트는 KST(UTC+9) 기준으로 시간 표시
+KST = timezone(timedelta(hours=9))
 
 
 def _make_session() -> tuple:
@@ -58,6 +61,8 @@ KNOWN_FIELDS: dict[str, list[str]] = {
     ],
     "sw_storage_sw": ["root_used_pct", "nvme_count", "nvme_critical", "nvme_wear_high"],
     "stress_gpu": [
+        "tool",
+        "duration_s",
         "gpu_class",
         "peak_temp_c",
         "peak_power_w",
@@ -65,22 +70,47 @@ KNOWN_FIELDS: dict[str, list[str]] = {
         "avg_util_pct",
         "ecc_delta_uncorr",
     ],
-    "stress_cpu": ["peak_temp_c", "max_freq_mhz", "avg_util_pct", "throttle_sample_count"],
-    "nccl_bandwidth": ["bw_2gpu_gbs", "bw_4gpu_gbs"],
+    "stress_cpu": [
+        "tool",
+        "duration_s",
+        "peak_temp_c",
+        "max_freq_mhz",
+        "avg_util_pct",
+        "throttle_sample_count",
+    ],
+    "nccl_bandwidth": [
+        "tool",
+        "gpu_count",
+        "bw_2gpu_gbs",
+        "bw_4gpu_gbs",
+        "min_bw_2gpu_gbs",
+        "min_bw_4gpu_gbs",
+    ],
     "collect_all_logs": ["xid_count"],
 }
 
 
-def parse_detail(detail: str) -> dict[str, str]:
-    """'key=val|key2=val2' 형식의 detail 문자열을 dict로 파싱."""
+def parse_detail(detail: str) -> tuple[dict[str, str], list[str]]:
+    """'key=val|key2=val2|WARN:msg' 형식의 detail → (data_dict, diagnostics_list).
+
+    WARN:/FAIL:/INFO: 프리픽스 메시지는 diagnostics_list에 별도 수집.
+    일반 key=val은 dict에 담김.
+    """
     if not detail:
-        return {}
-    result: dict[str, str] = {}
+        return {}, []
+    data: dict[str, str] = {}
+    diagnostics: list[str] = []
     for part in str(detail).split("|"):
-        k, sep, v = part.strip().partition("=")
+        part = part.strip()
+        if not part:
+            continue
+        if part.startswith(("WARN:", "FAIL:", "INFO:")):
+            diagnostics.append(part)
+            continue
+        k, sep, v = part.partition("=")
         if sep:
-            result[k.strip()] = v.strip()
-    return result
+            data[k.strip()] = v.strip()
+    return data, diagnostics
 
 
 def _build_phase_map(product_profile: str) -> dict[str, str]:
@@ -103,18 +133,30 @@ def _build_phase_map(product_profile: str) -> dict[str, str]:
 
 
 def _enrich_results(raw_results: list[dict], script_to_phase: dict[str, str]) -> list[dict]:
-    """check_results에 phase, display_fields 추가."""
+    """check_results에 phase, display_fields 추가.
+
+    display_fields 구성 순서:
+    1. 진단 메시지 (WARN:/FAIL:/INFO:) — 가장 눈에 띄도록 맨 앞
+    2. KNOWN_FIELDS에 정의된 필드 순서대로 (없으면 parsed 상위 8개)
+    """
     enriched = []
     for cr in raw_results:
-        parsed = parse_detail(cr.get("detail") or "")
+        parsed, diagnostics = parse_detail(cr.get("detail") or "")
         phase = script_to_phase.get(cr["check_name"], "unknown")
         known = KNOWN_FIELDS.get(cr["check_name"])
         if known is not None:
-            display_fields = [(k, parsed[k]) for k in known if k in parsed]
-            if not display_fields:
-                display_fields = list(parsed.items())[:8]
+            fields = [(k, parsed[k]) for k in known if k in parsed]
+            if not fields and not diagnostics:
+                fields = list(parsed.items())[:8]
         else:
-            display_fields = list(parsed.items())[:8]
+            fields = list(parsed.items())[:8]
+        # 진단 메시지를 (label, body) 튜플로 display_fields 맨 앞에 추가
+        # 예: "WARN:no_stress_tool_temp_only" → ("WARN", "no_stress_tool_temp_only")
+        diag_fields = []
+        for msg in diagnostics:
+            label, _, body = msg.partition(":")
+            diag_fields.append((label, body or msg))
+        display_fields = diag_fields + fields
         enriched.append({**cr, "phase": phase, "display_fields": display_fields})
     return enriched
 
@@ -173,10 +215,22 @@ def _detail_latex(text: str) -> str:
 
 
 def _fields_latex(display_fields: list) -> str:
-    """(key, val) 튜플 목록 → LaTeX \\newline 구분 이스케이프 문자열."""
+    """(key, val) 튜플 목록 → LaTeX \\newline 구분 이스케이프 문자열.
+
+    WARN/FAIL/INFO 레이블은 색상 강조. 그 외는 `key=val` 형식.
+    """
     if not display_fields:
         return "—"
-    return r"\newline ".join(_latex_escape(f"{k}={v}") for k, v in display_fields)
+    _DIAG_COLOR = {"WARN": "warntext", "FAIL": "failtext", "INFO": "headerblue"}
+    parts = []
+    for k, v in display_fields:
+        color = _DIAG_COLOR.get(k)
+        if color:
+            # 진단 메시지: 색상 + bold 레이블 + 본문
+            parts.append(rf"\textcolor{{{color}}}{{\bfseries {k}}}: {_latex_escape(v)}")
+        else:
+            parts.append(_latex_escape(f"{k}={v}"))
+    return r"\newline ".join(parts)
 
 
 _latex_env.filters["latex_escape"] = _latex_escape
@@ -380,7 +434,7 @@ async def _async_generate_report(job_id: str) -> None:
                 "target_host": job.target_host,
                 "target_user": job.target_user,
                 "product_profile": job.product_profile,
-                "created_at": job.created_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "created_at": job.created_at.astimezone(KST).strftime("%Y-%m-%d %H:%M:%S KST"),
             }
 
         # ── 2. NFS에서 Claude 판독 결과 로드 (없으면 DB에서 합성) ──
@@ -426,7 +480,7 @@ async def _async_generate_report(job_id: str) -> None:
             return [r for r in enriched if r["phase"] == phase]
 
         all_statuses = [r["status"] for r in enriched]
-        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        generated_at = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
         context = {
             **job_data,
             "overall": overall,

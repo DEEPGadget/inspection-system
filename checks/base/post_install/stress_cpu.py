@@ -105,7 +105,8 @@ def main():
 
         # python3 fallback은 별도 스레드로 처리; stress_proc은 None 유지
 
-    # 온도 파일 목록 결정
+    # 온도 파일 목록 결정: thermal_zone + hwmon(coretemp/k10temp)
+    # AMD는 thermal_zone이 없는 경우가 많으므로 hwmon sysfs 직접 탐색.
     temp_files = []
     from pathlib import Path
 
@@ -119,6 +120,28 @@ def main():
             zone_type = type_file.read_text().strip()
             if any(k in zone_type for k in ("x86_pkg_temp", "acpitz", "cpu")):
                 temp_files.append(temp_file)
+
+    hwmon_base = Path("/sys/class/hwmon")
+    if hwmon_base.exists():
+        for hwmon in sorted(hwmon_base.glob("hwmon*")):
+            name_file = hwmon / "name"
+            if not name_file.exists():
+                continue
+            chip = name_file.read_text().strip()
+            if chip not in ("coretemp", "k10temp", "zenpower"):
+                continue
+            for temp_input in sorted(hwmon.glob("temp*_input")):
+                label_file = Path(str(temp_input).replace("_input", "_label"))
+                label = label_file.read_text().strip() if label_file.exists() else ""
+                # AMD: Tctl/Tdie만 (Tccd*는 per-CCD 노이즈)
+                if chip in ("k10temp", "zenpower"):
+                    if label and label not in ("Tctl", "Tdie"):
+                        continue
+                # Intel: Package만 (Core N은 per-core)
+                elif chip == "coretemp":
+                    if label and not label.startswith("Package"):
+                        continue
+                temp_files.append(temp_input)
 
     # 모니터링 루프 (5초 간격)
     peak_temp = 0
@@ -158,7 +181,9 @@ def main():
 
         # sensors 백업
         if not temp_files:
-            sens_out = run("sensors 2>/dev/null | grep -oP 'Package id \\d+:\\s+\\+\\K[0-9.]+'")
+            sens_out = run(
+                "sensors 2>/dev/null | grep -oP '(?:Package id \\d+|Tctl|Tdie):\\s+\\+\\K[0-9.]+'"
+            )
             if sens_out:
                 try:
                     temp_c = int(float(sens_out.splitlines()[-1]))
@@ -226,9 +251,13 @@ def main():
     # 최대 주파수 (MHz)
     max_freq_mhz = max_freq_khz // 1000 if max_freq_khz > 0 else 0
 
+    # peak_temp_c=0은 "측정 실패"로 간주 (부하 중 CPU가 0°C일 리 없음).
+    # 측정 불가 구분 위해 숫자 대신 'unknown' 표기.
+    peak_temp_str = "unknown" if peak_temp == 0 else str(peak_temp)
+
     details += [
         f"tool={tool}",
-        f"peak_temp_c={peak_temp}",
+        f"peak_temp_c={peak_temp_str}",
         f"max_freq_mhz={max_freq_mhz}",
         f"min_freq_mhz_under_load={min_freq_mhz}",
         f"avg_util_pct={avg_util}",
@@ -241,6 +270,11 @@ def main():
         details.append(f"FAIL:peak_temp_over_100c({peak_temp}c)")
 
     # WARN 판정
+    if peak_temp == 0:
+        # 온도 센서 못 찾음 (hwmon 없음 + sensors fallback도 실패)
+        if status == "pass":
+            status = "warn"
+        details.append("WARN:no_temp_sensor_detected")
     if throttle_count > 0:
         if status == "pass":
             status = "warn"

@@ -22,7 +22,9 @@
 \definecolor{warntext}{HTML}{856404}
 \definecolor{summarybg}{HTML}{E8F4F8}
 \definecolor{rowgray}{HTML}{F8F9FA}
-\definecolor{preflight}{HTML}{1A3A5C}
+\definecolor{rejectedbg}{HTML}{FFE0B2}
+\definecolor{rejectedtext}{HTML}{E65100}
+\definecolor{preflight}{HTML}{1A5C8A}
 \definecolor{postinstall}{HTML}{2D6A4F}
 \definecolor{collectphase}{HTML}{5C4B1A}
 \definecolor{unknownphase}{HTML}{555555}
@@ -34,14 +36,6 @@
 
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{6pt}
-
-%% 상태별 행 색상 매크로
-\newcommand{\statusbadge}[1]{%
-  \ifnum\pdfstrcmp{#1}{pass}=0\textcolor{passtext}{\bfseries PASS}%
-  \else\ifnum\pdfstrcmp{#1}{fail}=0\textcolor{failtext}{\bfseries FAIL}%
-  \else\textcolor{warntext}{\bfseries WARN}%
-  \fi\fi%
-}
 
 \begin{document}
 
@@ -59,7 +53,7 @@
   \BLOCK{elif overall == "fail"}
     \colorbox{failbg}{\color{failtext}\bfseries\large\enspace FAIL\enspace}
   \BLOCK{elif overall == "rejected"}
-    \colorbox{failbg}{\color{failtext}\bfseries\large\enspace REJECTED\enspace}
+    \colorbox{rejectedbg}{\color{rejectedtext}\bfseries\large\enspace REJECTED\enspace}
   \BLOCK{else}
     \colorbox{warnbg}{\color{warntext}\bfseries\large\enspace ERROR\enspace}
   \BLOCK{endif}
