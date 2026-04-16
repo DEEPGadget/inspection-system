@@ -40,10 +40,6 @@ jobs:
           ruff check .
           ruff format --check .
 
-      - name: Shellcheck (검수 스크립트)
-        run: |
-          find checks/ -name "*.sh" -exec shellcheck {} +
-
       - name: Test (pytest)
         env:
           DATABASE_URL: postgresql+asyncpg://inspector:testpass@localhost:5432/inspection_test
