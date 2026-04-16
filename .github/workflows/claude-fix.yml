@@ -1,4 +1,4 @@
-# github/workflows/claude-fix.yml
+# .github/workflows/claude-fix.yml
 name: Claude Auto-Fix on Review
 
 on:
@@ -7,11 +7,21 @@ on:
   pull_request_review_comment:
     types: [created]
 
+# 같은 PR에 여러 리뷰가 거의 동시 도달 시 중복 실행 방지
+concurrency:
+  group: claude-fix-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
   auto-fix:
+    # 트리거 조건:
+    #   1) 리뷰가 changes_requested 상태로 제출됨
+    #   2) 리뷰 코멘트 본문에 "@claude fix" 포함
+    # skip 라벨이 붙은 PR은 제외
     if: |
-      github.event.review.state == 'changes_requested' ||
-      contains(github.event.comment.body, '@claude fix')
+      (github.event.review.state == 'changes_requested' ||
+       contains(github.event.comment.body, '@claude fix')) &&
+      !contains(github.event.pull_request.labels.*.name, 'no-claude-fix')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -26,36 +36,12 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           direct_prompt: |
-            리뷰 코멘트를 분석하고 요청된 변경사항을 직접 수정해줘.
-            수정 후 변경 내용을 요약해서 PR에 코멘트로 남겨줘.
-            .claude/rules/ 의 규칙을 반드시 준수해.thub/workflows/claude-fix.yml
-name: Claude Auto-Fix on Review
+            리뷰 코멘트를 분석하고 요청된 변경사항을 직접 수정하세요.
+            수정 후 변경 내용을 요약해서 PR에 한글로 코멘트를 남기세요.
 
-on:
-  pull_request_review:
-    types: [submitted]
-  pull_request_review_comment:
-    types: [created]
-
-jobs:
-  auto-fix:
-    if: |
-      github.event.review.state == 'changes_requested' ||
-      contains(github.event.comment.body, '@claude fix')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-
-      - uses: anthropics/claude-code-action@v1
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          direct_prompt: |
-            리뷰 코멘트를 분석하고 요청된 변경사항을 직접 수정해줘.
-            수정 후 변경 내용을 요약해서 PR에 코멘트로 남겨줘.
-            .claude/rules/ 의 규칙을 반드시 준수해.gg
+            **반드시 준수**:
+            - `.claude/rules/` 의 모든 규칙 준수
+            - 수정 후 `pytest tests/ -x -q` 와 `ruff check . && ruff format --check .` 모두 통과
+            - 테스트·lint 실패 시 수정 완료 전까지 커밋 금지
+            - 커밋 메시지는 한글, 왜(why) 중심으로 작성
+            - PR 코멘트는 반드시 한글로 작성

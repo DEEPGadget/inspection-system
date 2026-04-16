@@ -1,0 +1,109 @@
+# .github/workflows/claude-review.yml
+name: Claude Auto Review on PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# 같은 PR에 연속 push 시 이전 실행 취소 (최신 커밋만 리뷰)
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # draft PR 또는 skip 라벨 PR은 제외
+    if: |
+      github.event.pull_request.draft == false &&
+      !contains(github.event.pull_request.labels.*.name, 'no-claude-review')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            이 PR을 리뷰하세요. **모든 리뷰 출력은 한국어로 작성**.
+
+            ## 리뷰 절차
+
+            1. 변경된 파일 목록 확인 (`git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD`)
+            2. 아래 "규칙 로드 순서"에 따라 관련 규칙 파일만 읽기
+            3. 변경 diff와 규칙을 대조하며 리뷰
+            4. 이슈를 인라인 코멘트로 남기기 (심각도 프리픽스 + 한글 설명)
+
+            ## 규칙 로드 순서 (우선순위)
+
+            **Tier 1 — 반드시 모든 PR에서 참조** (보안·데이터 유실 방지):
+            - `.claude/rules/security.md`
+            - `.claude/rules/database.md`
+            - `.claude/rules/migration.md`
+            - `.claude/rules/error-handling.md`
+
+            **Tier 2 — 반드시 모든 PR에서 참조** (도메인 구조 유지):
+            - `.claude/rules/agents.md`
+            - `.claude/rules/workers.md`
+            - `.claude/rules/api.md`
+            - `.claude/rules/testing.md`
+
+            **Tier 3 — 변경 파일 경로에 따라 선택적 참조**:
+            - `workers/report.py`, `templates/*.tex.j2` 변경 시 → `.claude/rules/report.md`
+            - `workers/sw_install.py`, `workers/sw_planner.py`, `config/sw_compat_matrix.json` 변경 시 → `.claude/rules/sw-install.md`
+            - `checks/base/**/*.py` 변경 시 → `.claude/rules/inspection-scripts.md`
+            - `checks/profiles/*.json` 변경 시 → `.claude/rules/profiles.md`
+            - `workers/inspect.py`, `checks/base/preflight/sw_power_mgmt.py`, `checks/base/preflight/sw_auto_update.py` 변경 시 → `.claude/rules/sys-config.md`
+
+            변경 없는 영역의 규칙은 읽지 말 것 (토큰 절약).
+
+            ## 리뷰 중점 체크리스트
+
+            ### 필수 (놓치면 안 됨)
+            - **민감정보 유출**: 로그·리포트·DB에 `password`/`api_key`/`token` 평문 노출 여부
+            - **Job 상태 전이**: `error-handling.md` JobStatus 순서 위반 여부
+            - **에이전트 호출**: `agents.md` "토큰 0" 원칙 위반 (정상 경로에서 에이전트 호출 등)
+            - **Alembic 마이그레이션**: ENUM 변경 시 `create_type=False` + `DO $$ EXCEPTION` 패턴, downgrade 존재
+            - **retry 정책**: 스크립트 실행 실패는 즉시 FAIL, SSH/API만 재시도 3회
+
+            ### 리포트 변경 시 (PR이 workers/report.py 또는 templates/ 건드릴 때)
+            - `KNOWN_FIELDS` 키가 실제 스크립트 출력 필드와 일치하는지
+            - LaTeX 이스케이프 누락 (`\textemdash` 같은 백슬래시 문자열은 latex_escape 거치면 이중 이스케이프됨)
+            - 시간 표시는 KST 기준
+            - 판정 배지 색상: PASS=초록, FAIL=빨강, REJECTED=주황, WARN=노랑 (failed vs rejected 반드시 구별)
+
+            ### 검수 스크립트 변경 시
+            - stdout에 JSON 한 줄만 출력 (디버그는 stderr)
+            - 환경변수 수신 방식 (sshd AcceptEnv 우회 위해 `KEY=val python3 script.py` 인라인 prefix)
+            - AMD/Intel 센서 양쪽 지원 확인
+            - 빌드 경로는 `$HOME/` 또는 `/opt/` 접두사만 허용
+
+            ### SW 설치 변경 시
+            - `config/sw_compat_matrix.json` 에 없는 조합은 SW Planner Agent 경유
+            - 비정형 시스템 설정(grub, crontab 등)은 에이전트에게 위임
+            - 재부팅 필요 시 300s SSH 재접속 폴링
+
+            ## 출력 형식
+
+            각 이슈마다 인라인 코멘트로:
+            ```
+            🔴 [심각] 한 줄 요약
+            <본문 한글 설명>
+
+            **규칙 근거**: .claude/rules/xxx.md:NN
+            **수정 제안**: <구체적 코드 또는 패치>
+            ```
+
+            심각도 프리픽스:
+            - 🔴 심각 (blocking): 머지 금지
+            - 🟡 중간 (non-blocking): 머지 가능하나 개선 권장
+            - 🟢 제안 (nitpick): 선택적 개선
+
+            이슈가 전혀 없으면 PR에 "규칙 위반 없음" 한 줄 코멘트만 남기고 종료.
+
+            **모든 출력은 한국어로 작성**. 영어 혼용 금지 (기술 용어는 예외 허용).
