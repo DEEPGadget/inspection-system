@@ -66,7 +66,13 @@ KNOWN_FIELDS: dict[str, list[str]] = {
         "ecc_delta_uncorr",
     ],
     "stress_cpu": ["peak_temp_c", "max_freq_mhz", "avg_util_pct", "throttle_sample_count"],
-    "nccl_bandwidth": ["bw_2gpu_gbs", "bw_4gpu_gbs"],
+    "nccl_bandwidth": [
+        "gpu_count",
+        "bw_2gpu_gbs",
+        "bw_4gpu_gbs",
+        "min_bw_2gpu_gbs",
+        "min_bw_4gpu_gbs",
+    ],
     "collect_all_logs": ["xid_count"],
 }
 
