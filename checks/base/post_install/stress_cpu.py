@@ -251,9 +251,13 @@ def main():
     # 최대 주파수 (MHz)
     max_freq_mhz = max_freq_khz // 1000 if max_freq_khz > 0 else 0
 
+    # peak_temp_c=0은 "측정 실패"로 간주 (부하 중 CPU가 0°C일 리 없음).
+    # 측정 불가 구분 위해 숫자 대신 'unknown' 표기.
+    peak_temp_str = "unknown" if peak_temp == 0 else str(peak_temp)
+
     details += [
         f"tool={tool}",
-        f"peak_temp_c={peak_temp}",
+        f"peak_temp_c={peak_temp_str}",
         f"max_freq_mhz={max_freq_mhz}",
         f"min_freq_mhz_under_load={min_freq_mhz}",
         f"avg_util_pct={avg_util}",
@@ -266,6 +270,11 @@ def main():
         details.append(f"FAIL:peak_temp_over_100c({peak_temp}c)")
 
     # WARN 판정
+    if peak_temp == 0:
+        # 온도 센서 못 찾음 (hwmon 없음 + sensors fallback도 실패)
+        if status == "pass":
+            status = "warn"
+        details.append("WARN:no_temp_sensor_detected")
     if throttle_count > 0:
         if status == "pass":
             status = "warn"
