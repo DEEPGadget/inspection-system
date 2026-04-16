@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import openpyxl
@@ -24,6 +24,9 @@ from workers.app import app
 from workers.notify import publish_job_status
 
 log = structlog.get_logger(__name__)
+
+# 리포트는 KST(UTC+9) 기준으로 시간 표시
+KST = timezone(timedelta(hours=9))
 
 
 def _make_session() -> tuple:
@@ -386,7 +389,7 @@ async def _async_generate_report(job_id: str) -> None:
                 "target_host": job.target_host,
                 "target_user": job.target_user,
                 "product_profile": job.product_profile,
-                "created_at": job.created_at.strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "created_at": job.created_at.astimezone(KST).strftime("%Y-%m-%d %H:%M:%S KST"),
             }
 
         # ── 2. NFS에서 Claude 판독 결과 로드 (없으면 DB에서 합성) ──
@@ -432,7 +435,7 @@ async def _async_generate_report(job_id: str) -> None:
             return [r for r in enriched if r["phase"] == phase]
 
         all_statuses = [r["status"] for r in enriched]
-        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        generated_at = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S KST")
         context = {
             **job_data,
             "overall": overall,
