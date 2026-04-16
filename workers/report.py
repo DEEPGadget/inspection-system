@@ -39,10 +39,36 @@ def _make_session() -> tuple:
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 _PROFILES_DIR = Path(__file__).parent.parent / "checks" / "profiles"
 
+# 스크립트명 → 리포트에 표시할 한글 이름.
+# 없으면 스크립트명 그대로 폴백.
+DISPLAY_NAMES: dict[str, str] = {
+    "sw_gpu_hw": "GPU 하드웨어 (PCIe)",
+    "sw_cpu": "CPU 정보·온도",
+    "sw_memory": "메모리 (DIMM/NUMA/ECC)",
+    "sw_storage_hw": "스토리지 하드웨어",
+    "sw_network": "네트워크 (NIC/IB)",
+    "sw_os_version": "OS·커널 버전",
+    "sw_power_mgmt": "전원 관리",
+    "sw_auto_update": "자동 업데이트 비활성화",
+    "sw_gpu_sw": "GPU 드라이버·CUDA",
+    "sw_storage_sw": "스토리지 SW (NVMe SMART)",
+    "stress_gpu": "GPU 부하 테스트",
+    "stress_cpu": "CPU 부하 테스트",
+    "nccl_bandwidth": "NCCL 대역폭",
+    "collect_all_logs": "로그 수집",
+}
+
 # 스크립트별로 리포트에 표시할 필드 목록.
 # 없는 스크립트는 parse_detail() 결과 전체를 최대 8항목 fallback 표시.
 KNOWN_FIELDS: dict[str, list[str]] = {
-    "sw_gpu_hw": ["gpu_count", "link_width", "link_speed"],
+    "sw_gpu_hw": [
+        "gpu_count",
+        "link_width",
+        "link_speed",
+        "link_state_width",
+        "link_state_speed",
+        "downgraded_gpus",
+    ],
     "sw_cpu": ["model", "sockets", "cores", "max_temp_c"],
     "sw_memory": ["total_gb", "dimm_count", "numa_nodes", "memory_errors"],
     "sw_storage_hw": ["disk_count", "devices", "md_degraded"],
@@ -161,7 +187,15 @@ def _enrich_results(raw_results: list[dict], script_to_phase: dict[str, str]) ->
             label, _, body = msg.partition(":")
             diag_fields.append((label, body or msg))
         display_fields = diag_fields + fields
-        enriched.append({**cr, "phase": phase, "display_fields": display_fields})
+        display_name = DISPLAY_NAMES.get(cr["check_name"], cr["check_name"])
+        enriched.append(
+            {
+                **cr,
+                "phase": phase,
+                "display_name": display_name,
+                "display_fields": display_fields,
+            }
+        )
     return enriched
 
 
@@ -335,7 +369,7 @@ def _render_xlsx(context: dict, output_path: Path) -> None:
 
     # ── 시트2: 검수 항목 상세 ───────────────────────────────────────────────
     ws_detail = wb.create_sheet("검수 상세")
-    headers = ["스크립트", "Phase", "상태", "Claude 판정", "상세"]
+    headers = ["검수 항목", "스크립트", "Phase", "상태", "Claude 판정", "상세"]
     ws_detail.append(headers)
     for col_idx, _ in enumerate(headers, 1):
         cell = ws_detail.cell(row=1, column=col_idx)
@@ -346,6 +380,7 @@ def _render_xlsx(context: dict, output_path: Path) -> None:
     for cr in context["check_results"]:
         ws_detail.append(
             [
+                cr.get("display_name", cr["check_name"]),
                 cr["check_name"],
                 cr.get("phase", ""),
                 cr["status"].upper(),
@@ -353,16 +388,17 @@ def _render_xlsx(context: dict, output_path: Path) -> None:
                 cr["detail"],
             ]
         )
-        status_cell = ws_detail.cell(row=ws_detail.max_row, column=3)
+        status_cell = ws_detail.cell(row=ws_detail.max_row, column=4)
         status_cell.font = _STATUS_FONT.get(cr["status"], Font())
         status_cell.alignment = Alignment(horizontal="center")
-        ws_detail.cell(row=ws_detail.max_row, column=5).alignment = Alignment(wrap_text=True)
+        ws_detail.cell(row=ws_detail.max_row, column=6).alignment = Alignment(wrap_text=True)
 
-    ws_detail.column_dimensions["A"].width = 28
-    ws_detail.column_dimensions["B"].width = 14
-    ws_detail.column_dimensions["C"].width = 8
-    ws_detail.column_dimensions["D"].width = 35
-    ws_detail.column_dimensions["E"].width = 50
+    ws_detail.column_dimensions["A"].width = 26  # 검수 항목 (한글 display_name)
+    ws_detail.column_dimensions["B"].width = 20  # 스크립트 (원본 파일명)
+    ws_detail.column_dimensions["C"].width = 14  # Phase
+    ws_detail.column_dimensions["D"].width = 8  # 상태
+    ws_detail.column_dimensions["E"].width = 35  # Claude 판정
+    ws_detail.column_dimensions["F"].width = 50  # 상세
 
     wb.save(str(output_path))
 

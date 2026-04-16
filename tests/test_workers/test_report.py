@@ -19,6 +19,7 @@ def _make_context(overall: str = "pass") -> dict:
     check_results = [
         {
             "check_name": "sw_gpu_hw",
+            "display_name": "GPU 하드웨어 (PCIe)",
             "status": "pass",
             "detail": "gpu_count=4|link_width=16|link_speed=16GT/s",
             "claude_verdict": "[PASS] 정상",
@@ -27,6 +28,7 @@ def _make_context(overall: str = "pass") -> dict:
         },
         {
             "check_name": "sw_power_mgmt",
+            "display_name": "전원 관리",
             "status": "fail" if overall == "fail" else "pass",
             "detail": "sleep_target=active|cpu_governor=performance",
             "claude_verdict": "[FAIL] 미마스킹" if overall == "fail" else "[PASS] 정상",
@@ -96,7 +98,9 @@ def test_render_xlsx_detail_rows(tmp_path):
     ws = wb["검수 상세"]
     # 헤더(1) + 검수 항목(2)
     assert ws.max_row == 3
-    assert ws.cell(row=2, column=1).value == "sw_gpu_hw"
+    # 1열=display_name, 2열=script(check_name)
+    assert ws.cell(row=2, column=1).value == "GPU 하드웨어 (PCIe)"
+    assert ws.cell(row=2, column=2).value == "sw_gpu_hw"
 
 
 def test_render_xlsx_fail_reasons(tmp_path):

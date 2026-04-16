@@ -152,20 +152,20 @@
 %% 스크립트(0.20) | 상태(0.07) | Claude 판정(0.29) | 상세(0.34)
 \newcommand{\checktableheader}{%
   \rowcolor{headerblue}%
-  \textcolor{white}{\bfseries 스크립트} &
+  \textcolor{white}{\bfseries 검수 항목} &
   \textcolor{white}{\bfseries 상태} &
   \textcolor{white}{\bfseries Claude 판정} &
   \textcolor{white}{\bfseries 상세} \tabularnewline
 }
 
 \BLOCK{macro render_phase_table(results)}
-\begin{longtable}{>{\small}p{0.20\textwidth}>{\small\centering\arraybackslash}p{0.07\textwidth}>{\small\raggedright\arraybackslash}p{0.29\textwidth}>{\small\raggedright\arraybackslash}p{0.34\textwidth}}
+\begin{longtable}{>{\small}p{0.22\textwidth}>{\small\centering\arraybackslash}p{0.07\textwidth}>{\small\raggedright\arraybackslash}p{0.27\textwidth}>{\small\raggedright\arraybackslash}p{0.34\textwidth}}
   \checktableheader
   \endfirsthead
   \checktableheader
   \endhead
 \BLOCK{for cr in results}
-  \VAR{cr.check_name | latex_escape} &
+  \VAR{cr.display_name | latex_escape} \newline {\scriptsize\ttfamily\color{gray}\VAR{cr.check_name | latex_escape}} &
   \BLOCK{if cr.status == "pass"}%
     \textcolor{passtext}{\bfseries PASS}%
   \BLOCK{elif cr.status == "fail"}%
