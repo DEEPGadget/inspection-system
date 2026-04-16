@@ -68,7 +68,19 @@ _latex_env = Environment(
     autoescape=False,
     loader=FileSystemLoader(str(_TEMPLATES_DIR)),
 )
+
+
+def _detail_latex(text: str) -> str:
+    """detail 필드(key=val|key2=val2)를 LaTeX p{} 컬럼에서 줄바꿈되도록 변환.
+
+    | 구분자를 기준으로 분리 후 각 파트를 latex_escape → \\newline 으로 재결합.
+    """
+    parts = str(text).split("|")
+    return r"\newline ".join(_latex_escape(p.strip()) for p in parts)
+
+
 _latex_env.filters["latex_escape"] = _latex_escape
+_latex_env.filters["detail_latex"] = _detail_latex
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +285,24 @@ async def _async_generate_report(job_id: str) -> None:
         if verdict_file.exists():
             verdict = json.loads(verdict_file.read_text(encoding="utf-8"))
             overall = verdict.get("verdict", "fail")
+
+            # claude_verdict.json은 fail_items/warn_items (dict 목록) 사용.
+            # 템플릿이 기대하는 문자열 목록으로 변환.
+            def _item_to_str(it: dict) -> str:
+                base = f"{it.get('check', '?')}: {it.get('metric', '?')}={it.get('value', '?')}"
+                rule = it.get("rule")
+                threshold = it.get("threshold")
+                if rule and threshold is not None:
+                    return f"{base} ({rule}={threshold})"
+                return base
+
+            fail_reasons = [_item_to_str(it) for it in verdict.get("fail_items", [])]
+            warn_reasons = [_item_to_str(it) for it in verdict.get("warn_items", [])]
+            summary = (
+                verdict.get("agent_verdict", {}).get("reason", "")
+                if verdict.get("agent_verdict")
+                else ""
+            )
         else:
             # validation이 실행되지 않은 경우 (preflight/post_install 실패 등)
             # check_results에서 fallback verdict 합성
@@ -283,22 +313,17 @@ async def _async_generate_report(job_id: str) -> None:
             warn_reasons = [
                 f"{cr.check_name}: {cr.detail[:120]}" for cr in check_results if cr.status == "warn"
             ]
-            overall = "fail"
-            verdict = {
-                "overall": overall,
-                "fail_reasons": fail_reasons,
-                "warn_reasons": warn_reasons,
-                "summary": "",
-            }
+            overall = "fail" if fail_reasons else "pass"
+            summary = ""
 
         # ── 3. 렌더링 컨텍스트 구성 ───────────────────────────
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         context = {
             **job_data,
             "overall": overall,
-            "fail_reasons": verdict.get("fail_reasons", []),
-            "warn_reasons": verdict.get("warn_reasons", []),
-            "summary": verdict.get("summary", ""),
+            "fail_reasons": fail_reasons,
+            "warn_reasons": warn_reasons,
+            "summary": summary,
             "generated_at": generated_at,
             "check_results": [
                 {

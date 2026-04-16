@@ -128,8 +128,8 @@
   \BLOCK{else}%
     \textcolor{warntext}{\bfseries WARN}%
   \BLOCK{endif} &
-  \VAR{(cr.claude_verdict or "\textemdash") | latex_escape} &
-  \VAR{cr.detail | latex_escape} \tabularnewline
+  \VAR{(cr.claude_verdict or "—") | latex_escape} &
+  \VAR{cr.detail | detail_latex} \tabularnewline
   \hline
 \BLOCK{endfor}
 \end{longtable}
