@@ -2,6 +2,10 @@
 
 stress_gpu / stress_cpu / nccl_bandwidth 의 시계열 및 집계 결과를 PNG로 저장.
 workers/report.py 에서 호출.
+
+폰트 정책:
+- 기본(제목/축/범례): Roboto → Liberation Sans(Arial 호환) → DejaVu Sans
+- Monospace(어노테이션/통계): Cascadia Code → Consolas → DejaVu Sans Mono
 """
 
 from __future__ import annotations
@@ -18,7 +22,22 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import to_rgb  # noqa: E402
 
+# 폰트 우선순위 — 첫 번째 매칭 폰트가 자동 선택됨
+matplotlib.rcParams["font.family"] = "sans-serif"
+matplotlib.rcParams["font.sans-serif"] = [
+    "Roboto",
+    "Arial",
+    "Liberation Sans",
+    "DejaVu Sans",
+]
+matplotlib.rcParams["font.monospace"] = [
+    "Cascadia Code",
+    "Consolas",
+    "DejaVu Sans Mono",
+]
+
 _BASE_COLORS = ["tab:blue", "tab:red", "tab:green", "tab:purple", "tab:orange"]
+_MONO = {"family": "monospace"}
 
 
 def _load_json(path: Path) -> dict | None:
@@ -234,6 +253,7 @@ def _plot_temp_panel(ax, times, temps_per_gpu, gpus, colors, user_limit):
             transform=ax.transAxes,
             va="top",
             fontsize=9,
+            fontfamily="monospace",
             bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
         )
 
@@ -261,6 +281,7 @@ def _annotate_max_temp(ax, times, temps_per_gpu, gpus):
         xytext=(10, 10),
         textcoords="offset points",
         fontsize=8,
+        fontfamily="monospace",
         bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7),
         arrowprops=dict(arrowstyle="->", color="black", lw=0.8),
     )
@@ -389,43 +410,117 @@ def _generate_cooling_heatmap(times, temps_per_gpu, gpus, output_path: Path):
 
 
 def generate_cpu_chart(timeseries_path: Path, output_path: Path) -> bool:
+    """CPU 스트레스 시계열 차트 생성 (3-panel).
+
+    멀티 소켓(EPYC dual / Xeon dual)이면 socket별 라인 분리 표시.
+    """
     data = _load_json(timeseries_path)
     if not data or not data.get("samples"):
         return False
 
     samples = data["samples"]
+    sockets: list[dict] = data.get("sockets", [])
+    socket_count = len(sockets)
     times = [s.get("t", i) for i, s in enumerate(samples)]
-    temps = [_safe_num(s.get("temp")) for s in samples]
     freqs = [_safe_num(s.get("freq")) for s in samples]
     utils = [_safe_num(s.get("util")) for s in samples]
+
+    # 소켓별 온도 시계열 분리
+    if socket_count > 0:
+        socket_temps_per: list[list[float]] = [[] for _ in range(socket_count)]
+        for s in samples:
+            st = s.get("socket_temps") or []
+            for i in range(socket_count):
+                v = st[i] if i < len(st) else None
+                socket_temps_per[i].append(_safe_num(v))
+    else:
+        # fallback: 단일 temp 필드만
+        socket_temps_per = [[_safe_num(s.get("temp")) for s in samples]]
+        socket_count = 1
+
+    socket_palette = ["tab:red", "tab:blue", "tab:green", "tab:purple"]
 
     fig, axes = plt.subplots(3, 1, figsize=(11, 7), sharex=True)
     ax_t, ax_f, ax_u = axes
 
-    ax_t.plot(times, temps, color="tab:red", linewidth=1.2, label="CPU Temp")
+    # ── Temperature panel ───────────────────────────────────────
+    title_suffix = f"  |  Sockets: {socket_count}"
+    if socket_count > 1:
+        for i in range(socket_count):
+            label = (
+                f"Socket {sockets[i]['id']} ({sockets[i].get('chip', '?')})"
+                if i < len(sockets)
+                else f"Socket {i}"
+            )
+            ax_t.plot(
+                times,
+                socket_temps_per[i],
+                color=socket_palette[i % len(socket_palette)],
+                linewidth=1.2,
+                label=label,
+            )
+    else:
+        ax_t.plot(times, socket_temps_per[0], color="tab:red", linewidth=1.2, label="CPU Temp")
     ax_t.set_ylabel("Temperature (°C)")
-    ax_t.set_title("CPU Stress Test")
+    ax_t.set_title(f"CPU Stress Test{title_suffix}")
     ax_t.grid(True, alpha=0.3)
     ax_t.legend(loc="lower right", fontsize=8)
-    valid_temps = [t for t in temps if _is_valid(t)]
-    if valid_temps:
-        peak = max(valid_temps)
-        peak_idx = temps.index(peak)
+
+    # 최댓값 어노테이션 (모든 소켓 통합)
+    max_val = float("-inf")
+    max_socket = -1
+    max_t = -1
+    for i in range(socket_count):
+        for ti, v in enumerate(socket_temps_per[i]):
+            if _is_valid(v) and v > max_val:
+                max_val = v
+                max_socket = i
+                max_t = times[ti]
+    if max_socket >= 0:
+        anno = f"max: {max_val:.0f}°C @ t={max_t}s"
+        if socket_count > 1:
+            anno += f"\nSocket {max_socket}"
         ax_t.annotate(
-            f"max: {peak:.0f}°C @ t={times[peak_idx]}s",
-            xy=(times[peak_idx], peak),
+            anno,
+            xy=(max_t, max_val),
             xytext=(10, 10),
             textcoords="offset points",
             fontsize=8,
+            fontfamily="monospace",
             bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.7),
             arrowprops=dict(arrowstyle="->", color="black", lw=0.8),
         )
 
+    # 소켓간 spread 통계 (멀티 소켓일 때만 의미)
+    if socket_count > 1:
+        spreads = []
+        for ti in range(len(times)):
+            vals = [
+                socket_temps_per[i][ti]
+                for i in range(socket_count)
+                if _is_valid(socket_temps_per[i][ti])
+            ]
+            if len(vals) >= 2:
+                spreads.append(max(vals) - min(vals))
+        if spreads:
+            ax_t.text(
+                0.02,
+                0.97,
+                f"socket spread: avg {statistics.mean(spreads):.1f}°C, peak {max(spreads):.1f}°C",
+                transform=ax_t.transAxes,
+                va="top",
+                fontsize=9,
+                fontfamily="monospace",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+            )
+
+    # ── Frequency panel ─────────────────────────────────────────
     ax_f.plot(times, freqs, color="tab:blue", linewidth=1.2, label="Frequency (cpu0)")
     ax_f.set_ylabel("Frequency (MHz)")
     ax_f.grid(True, alpha=0.3)
     ax_f.legend(loc="lower right", fontsize=8)
 
+    # ── Utilization panel ───────────────────────────────────────
     ax_u.plot(times, utils, color="tab:green", linewidth=1.2, label="Utilization")
     ax_u.set_ylabel("Utilization (%)")
     ax_u.set_xlabel("Time (s)")

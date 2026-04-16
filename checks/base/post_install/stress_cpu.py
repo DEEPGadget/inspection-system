@@ -110,21 +110,14 @@ def main():
 
         # python3 fallback은 별도 스레드로 처리; stress_proc은 None 유지
 
-    # 온도 파일 목록 결정: thermal_zone + hwmon(coretemp/k10temp)
-    # AMD는 thermal_zone이 없는 경우가 많으므로 hwmon sysfs 직접 탐색.
-    temp_files = []
+    # 소켓별 온도 센서 수집.
+    # 1 hwmon (coretemp/k10temp/zenpower) = 1 소켓.
+    # 각 소켓 내부에서는 Intel="Package id N" / AMD="Tctl|Tdie" 1개만 채택.
+    # AMD Tccd*, Intel "Core N"은 per-CCD/per-core 노이즈라 제외.
+    # 멀티 소켓(EPYC dual, Xeon dual) 시 hwmon이 소켓 수만큼 등장.
     from pathlib import Path
 
-    thermal_base = Path("/sys/class/thermal")
-    if thermal_base.exists():
-        for zone in sorted(thermal_base.glob("thermal_zone*")):
-            type_file = zone / "type"
-            temp_file = zone / "temp"
-            if not (type_file.exists() and temp_file.exists()):
-                continue
-            zone_type = type_file.read_text().strip()
-            if any(k in zone_type for k in ("x86_pkg_temp", "acpitz", "cpu")):
-                temp_files.append(temp_file)
+    sockets: list[dict] = []  # [{"id": 0, "chip": "k10temp", "label": "Tctl", "file": Path}]
 
     hwmon_base = Path("/sys/class/hwmon")
     if hwmon_base.exists():
@@ -135,18 +128,49 @@ def main():
             chip = name_file.read_text().strip()
             if chip not in ("coretemp", "k10temp", "zenpower"):
                 continue
+            chosen: Path | None = None
+            chosen_label = ""
             for temp_input in sorted(hwmon.glob("temp*_input")):
                 label_file = Path(str(temp_input).replace("_input", "_label"))
                 label = label_file.read_text().strip() if label_file.exists() else ""
-                # AMD: Tctl/Tdie만 (Tccd*는 per-CCD 노이즈)
                 if chip in ("k10temp", "zenpower"):
                     if label and label not in ("Tctl", "Tdie"):
                         continue
-                # Intel: Package만 (Core N은 per-core)
                 elif chip == "coretemp":
                     if label and not label.startswith("Package"):
                         continue
-                temp_files.append(temp_input)
+                chosen = temp_input
+                chosen_label = label
+                break  # 한 hwmon(소켓)당 1개만
+            if chosen is not None:
+                sockets.append(
+                    {
+                        "id": len(sockets),
+                        "chip": chip,
+                        "label": chosen_label,
+                        "file": chosen,
+                    }
+                )
+
+    # hwmon 못 찾으면 thermal_zone fallback (단일 소켓 처리)
+    if not sockets:
+        thermal_base = Path("/sys/class/thermal")
+        if thermal_base.exists():
+            for zone in sorted(thermal_base.glob("thermal_zone*")):
+                type_file = zone / "type"
+                temp_file = zone / "temp"
+                if not (type_file.exists() and temp_file.exists()):
+                    continue
+                zone_type = type_file.read_text().strip()
+                if any(k in zone_type for k in ("x86_pkg_temp", "acpitz", "cpu")):
+                    sockets.append(
+                        {
+                            "id": len(sockets),
+                            "chip": zone_type,
+                            "label": "",
+                            "file": temp_file,
+                        }
+                    )
 
     # 모니터링 루프
     peak_temp = 0
@@ -180,15 +204,17 @@ def main():
             break
 
         # 이 샘플의 순간값
-        sample_temp: int | None = None
+        sample_temp: int | None = None  # max across sockets (하위 호환)
         sample_freq: int | None = None
         sample_util: int | None = None
+        socket_temps: list[int | None] = [None] * len(sockets)
 
-        # CPU 온도 수집
-        for f in temp_files:
+        # 소켓별 CPU 온도 수집 (Tctl/Package id 0)
+        for sock in sockets:
             try:
-                raw = int(f.read_text().strip())
+                raw = int(sock["file"].read_text().strip())
                 temp_c = raw // 1000
+                socket_temps[sock["id"]] = temp_c
                 if sample_temp is None or temp_c > sample_temp:
                     sample_temp = temp_c
                 if temp_c > peak_temp:
@@ -196,8 +222,8 @@ def main():
             except Exception:
                 pass
 
-        # sensors 백업
-        if not temp_files:
+        # sensors 백업 (소켓 식별 불가 — 단일 값으로만 처리)
+        if not sockets:
             sens_out = run(
                 "sensors 2>/dev/null | grep -oP '(?:Package id \\d+|Tctl|Tdie):\\s+\\+\\K[0-9.]+'"
             )
@@ -250,11 +276,12 @@ def main():
         else:
             time.sleep(sample_interval)
 
-        # 시계열 샘플 기록
+        # 시계열 샘플 기록 (socket_temps는 소켓별 온도 배열)
         timeseries_samples.append(
             {
                 "t": int(time.time() - start_time),
                 "temp": sample_temp,
+                "socket_temps": socket_temps,
                 "freq": sample_freq,
                 "util": sample_util,
             }
@@ -288,6 +315,7 @@ def main():
 
     details += [
         f"tool={tool}",
+        f"socket_count={len(sockets)}",
         f"peak_temp_c={peak_temp_str}",
         f"max_freq_mhz={max_freq_mhz}",
         f"min_freq_mhz_under_load={min_freq_mhz}",
@@ -321,6 +349,7 @@ def main():
 
     timeseries = {
         "sample_interval_s": sample_interval,
+        "sockets": [{"id": s["id"], "chip": s["chip"], "label": s["label"]} for s in sockets],
         "samples": timeseries_samples,
     }
     emit(status, details, timeseries=timeseries)

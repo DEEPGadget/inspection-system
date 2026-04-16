@@ -3,7 +3,26 @@
 \usepackage{fontspec}
 \usepackage{xeCJK}
 \setCJKmainfont{Noto Sans CJK KR}
-\setmainfont{Latin Modern Roman}
+% 본문/제목: Roboto (없으면 Liberation Sans = Arial 호환, 그것도 없으면 Latin Modern)
+\IfFontExistsTF{Roboto}{%
+  \setmainfont{Roboto}%
+}{%
+  \IfFontExistsTF{Liberation Sans}{%
+    \setmainfont{Liberation Sans}%
+  }{%
+    \setmainfont{Latin Modern Roman}%
+  }%
+}
+% Monospace(코드/지표): Consolas → Cascadia Code → DejaVu Sans Mono
+\IfFontExistsTF{Consolas}{%
+  \setmonofont{Consolas}[Scale=0.92]%
+}{%
+  \IfFontExistsTF{Cascadia Code}{%
+    \setmonofont{Cascadia Code}[Scale=0.92]%
+  }{%
+    \setmonofont{DejaVu Sans Mono}[Scale=0.85]%
+  }%
+}
 \usepackage{xcolor}
 \usepackage{colortbl}
 \usepackage{longtable}
