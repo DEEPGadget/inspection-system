@@ -3,7 +3,26 @@
 \usepackage{fontspec}
 \usepackage{xeCJK}
 \setCJKmainfont{Noto Sans CJK KR}
-\setmainfont{Latin Modern Roman}
+% 본문/제목: Roboto (없으면 Liberation Sans = Arial 호환, 그것도 없으면 Latin Modern)
+\IfFontExistsTF{Roboto}{%
+  \setmainfont{Roboto}%
+}{%
+  \IfFontExistsTF{Liberation Sans}{%
+    \setmainfont{Liberation Sans}%
+  }{%
+    \setmainfont{Latin Modern Roman}%
+  }%
+}
+% Monospace(코드/지표): Consolas → Cascadia Code → DejaVu Sans Mono
+\IfFontExistsTF{Consolas}{%
+  \setmonofont{Consolas}[Scale=0.92]%
+}{%
+  \IfFontExistsTF{Cascadia Code}{%
+    \setmonofont{Cascadia Code}[Scale=0.92]%
+  }{%
+    \setmonofont{DejaVu Sans Mono}[Scale=0.85]%
+  }%
+}
 \usepackage{xcolor}
 \usepackage{colortbl}
 \usepackage{longtable}
@@ -11,6 +30,7 @@
 \usepackage{booktabs}
 \usepackage{fancyhdr}
 \usepackage{parskip}
+\usepackage{graphicx}
 \usepackage[hidelinks]{hyperref}
 
 \definecolor{headerblue}{HTML}{1A3A5C}
@@ -132,20 +152,20 @@
 %% 스크립트(0.20) | 상태(0.07) | Claude 판정(0.29) | 상세(0.34)
 \newcommand{\checktableheader}{%
   \rowcolor{headerblue}%
-  \textcolor{white}{\bfseries 스크립트} &
+  \textcolor{white}{\bfseries 검수 항목} &
   \textcolor{white}{\bfseries 상태} &
   \textcolor{white}{\bfseries Claude 판정} &
   \textcolor{white}{\bfseries 상세} \tabularnewline
 }
 
 \BLOCK{macro render_phase_table(results)}
-\begin{longtable}{>{\small}p{0.20\textwidth}>{\small\centering\arraybackslash}p{0.07\textwidth}>{\small\raggedright\arraybackslash}p{0.29\textwidth}>{\small\raggedright\arraybackslash}p{0.34\textwidth}}
+\begin{longtable}{>{\small}p{0.22\textwidth}>{\small\centering\arraybackslash}p{0.07\textwidth}>{\small\raggedright\arraybackslash}p{0.27\textwidth}>{\scriptsize\ttfamily\raggedright\arraybackslash}p{0.34\textwidth}}
   \checktableheader
   \endfirsthead
   \checktableheader
   \endhead
 \BLOCK{for cr in results}
-  \VAR{cr.check_name | latex_escape} &
+  \VAR{cr.display_name | latex_escape} \newline {\scriptsize\ttfamily\color{gray}\VAR{cr.check_name | latex_escape}} &
   \BLOCK{if cr.status == "pass"}%
     \textcolor{passtext}{\bfseries PASS}%
   \BLOCK{elif cr.status == "fail"}%
@@ -176,6 +196,39 @@
 }}
 \smallskip
 \VAR{render_phase_table(post_install_results)}
+
+%% ── 부하 테스트 차트 (시계열) ────────────────────────────────────
+\BLOCK{if chart_gpu_path}
+\medskip
+{\bfseries\color{postinstall} GPU 스트레스 테스트 — 시계열}
+
+\smallskip
+\noindent\includegraphics[width=\textwidth]{\VAR{chart_gpu_path}}
+\BLOCK{endif}
+
+\BLOCK{if chart_gpu_cooling_path}
+\smallskip
+{\bfseries\color{postinstall} 냉각 일관성 — Per-GPU 온도 Heatmap}
+
+\smallskip
+\noindent\includegraphics[width=\textwidth]{\VAR{chart_gpu_cooling_path}}
+\BLOCK{endif}
+
+\BLOCK{if chart_cpu_path}
+\medskip
+{\bfseries\color{postinstall} CPU 스트레스 테스트 — 시계열}
+
+\smallskip
+\noindent\includegraphics[width=\textwidth]{\VAR{chart_cpu_path}}
+\BLOCK{endif}
+
+\BLOCK{if chart_nccl_path}
+\medskip
+{\bfseries\color{postinstall} NCCL 대역폭 — 기준선 대비}
+
+\smallskip
+\noindent\includegraphics[width=0.7\textwidth]{\VAR{chart_nccl_path}}
+\BLOCK{endif}
 \BLOCK{endif}
 
 \BLOCK{if collect_results}

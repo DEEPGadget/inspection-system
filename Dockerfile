@@ -19,6 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     texlive-fonts-recommended \
     texlive-lang-cjk \
     texlive-lang-chinese \
-    fonts-noto-cjk && \
+    fonts-noto-cjk \
+    fonts-roboto \
+    fonts-liberation \
+    fonts-cascadia-code \
+    fontconfig && \
+    fc-cache -f && \
     rm -rf /var/lib/apt/lists/*
 COPY . .
