@@ -165,11 +165,9 @@ def _parse_slowdown_temps(temp_out: str) -> list[int | None]:
         # "GPU Slowdown Temp : 98 C" 또는 "GPU Slowdown T.Limit : 98 C"
         m = re.match(r"GPU\s+Slowdown\s+Temp\s*:\s*(\d+)", line)
         if m:
-            try:
-                current = int(m.group(1))
-                found_in_block = True
-            except Exception:
-                pass
+            # 정규식이 (\d+)로 숫자만 캡처하므로 int() 실패 불가
+            current = int(m.group(1))
+            found_in_block = True
     # 마지막 블록 flush
     if found_in_block:
         results.append(current)
@@ -392,31 +390,33 @@ def main():
             if idx >= gpu_count:
                 continue
 
+            # nvidia-smi 필드는 드물게 "[N/A]"를 반환해 int() 변환이 실패할 수 있음.
+            # 베스트에포트 텔레메트리 수집이므로 파싱 실패한 샘플은 무시하고 다음 필드로 진행.
             try:
                 temp = int(temp_s)
                 sample_temps[idx] = temp
                 if temp > peak_temp:
                     peak_temp = temp
-            except Exception:
+            except (ValueError, TypeError):
                 pass
             try:
                 pwr = int(float(power_s))
                 sample_powers[idx] = pwr
                 if pwr > peak_power:
                     peak_power = pwr
-            except Exception:
+            except (ValueError, TypeError):
                 pass
             try:
                 util = int(util_s)
                 sample_utils[idx] = util
                 util_sum += util
                 sample_count += 1
-            except Exception:
+            except (ValueError, TypeError):
                 pass
             try:
                 mem_used = int(float(mem_s))
                 sample_mem[idx] = mem_used
-            except Exception:
+            except (ValueError, TypeError):
                 pass
 
             if throttle_s.startswith("0x"):
@@ -428,7 +428,7 @@ def main():
                         slowdown_sw += 1
                     if dec & 0x1:
                         slowdown_pwr += 1
-                except Exception:
+                except (ValueError, TypeError):
                     pass
 
         # 시계열 샘플 기록 (상대 시간 초 단위)

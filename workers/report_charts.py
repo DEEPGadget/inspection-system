@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import colorsys
 import json
+import math
 import statistics
 from pathlib import Path
 
@@ -37,7 +38,6 @@ matplotlib.rcParams["font.monospace"] = [
 ]
 
 _BASE_COLORS = ["tab:blue", "tab:red", "tab:green", "tab:purple", "tab:orange"]
-_MONO = {"family": "monospace"}
 
 
 def _load_json(path: Path) -> dict | None:
@@ -364,7 +364,7 @@ def _plot_util_panel(ax, times, utils_per_gpu, gpus, colors):
 
 
 def _is_valid(v) -> bool:
-    return isinstance(v, (int, float)) and v == v  # NaN check: NaN != NaN
+    return isinstance(v, (int, float)) and not math.isnan(v)
 
 
 # ---------------------------------------------------------------------------
