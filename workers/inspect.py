@@ -676,7 +676,7 @@ async def _async_post_install(
             elif stress_tools and not secret:
                 log.warning("post_install.stress_tools_skip", reason="sudo_password not provided")
 
-            # GPU 있고 CUDA 미설치 → 임시 CUDA 설치 (stress_gpu.py gpu_burn 실행 전제)
+            # GPU 있고 CUDA 미설치 → 임시 CUDA 설치 (stress_gpu.py gadget-burn 실행 전제)
             from workers.sw_install import (
                 _check_cuda_installed,
                 _detect_has_nvidia_gpu,

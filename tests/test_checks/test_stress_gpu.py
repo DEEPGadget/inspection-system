@@ -1,6 +1,6 @@
 """
 stress_gpu.py 유닛 테스트.
-nvidia-smi / gpu_burn / dcgmi 없는 CI 환경을 가정.
+nvidia-smi / gadget-burn / dcgmi 없는 CI 환경을 가정.
 스크립트를 직접 실행하지 않고, 출력 JSON 규격과 로직 분기만 검증.
 """
 
@@ -101,7 +101,7 @@ def test_mock_output_parsing():
     """스크립트 출력 예시가 유효한 JSON인지 확인."""
     sample = (
         '{"check":"stress_gpu","status":"pass",'
-        '"detail":"gpu_count=2|tdp_w=400|tool=gpu_burn|duration_s=1'
+        '"detail":"gpu_count=2|tdp_w=400|tool=gadget-burn|duration_s=1'
         "|peak_temp_c=70|peak_power_w=380|power_ratio_pct=95|avg_util_pct=99"
         "|slowdown_hw=0|slowdown_sw=0|slowdown_pwr=0"
         "|ecc_corr_before=0|ecc_corr_after=0|ecc_delta_corr=0"
@@ -109,19 +109,19 @@ def test_mock_output_parsing():
     )
     data = json.loads(sample)
     assert data["status"] == "pass"
-    assert "tool=gpu_burn" in data["detail"]
+    assert "tool=gadget-burn" in data["detail"]
 
 
 def test_mock_build_tools_missing_returns_fail():
-    """gpu_burn 빌드 도구 누락 시 fail + 사유."""
+    """gadget-burn 빌드 도구 누락 시 fail + 사유."""
     sample = (
         '{"check":"stress_gpu","status":"fail",'
         '"detail":"gpu_count=8|tdp_w=700'
-        '|FAIL:gpu_burn_build_tools_missing=nvcc,make|tool=none|duration_s=300"}'
+        '|FAIL:gadget_burn_build_tools_missing=nvcc,make|tool=none|duration_s=300"}'
     )
     data = json.loads(sample)
     assert data["status"] == "fail"
-    assert "FAIL:gpu_burn_build_tools_missing" in data["detail"]
+    assert "FAIL:gadget_burn_build_tools_missing" in data["detail"]
 
 
 def test_classify_gpu_gaming():
@@ -162,22 +162,22 @@ def test_classify_gpu_empty():
 
 
 def test_mock_clone_failed_returns_fail():
-    """gpu_burn git clone 실패 시 사유 포함."""
+    """gadget-burn git clone 실패 시 사유 포함."""
     sample = (
         '{"check":"stress_gpu","status":"fail",'
         '"detail":"gpu_count=8|tdp_w=700'
-        '|FAIL:gpu_burn_clone_failed:fatal: unable to access // Could not resolve host"}'
+        '|FAIL:gadget_burn_clone_failed:fatal: unable to access // Could not resolve host"}'
     )
     data = json.loads(sample)
     assert data["status"] == "fail"
-    assert "FAIL:gpu_burn_clone_failed" in data["detail"]
+    assert "FAIL:gadget_burn_clone_failed" in data["detail"]
 
 
 def test_fail_conditions_in_detail():
     """FAIL 조건 문자열이 detail에 포함되는 샘플 JSON 파싱."""
     sample = (
         '{"check":"stress_gpu","status":"fail",'
-        '"detail":"tool=gpu_burn|peak_temp_c=92'
+        '"detail":"tool=gadget-burn|peak_temp_c=92'
         "|FAIL:peak_temp_over_87c(92c)"
         '|FAIL:ecc_uncorrected_increased_by=1"}'
     )
