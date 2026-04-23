@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""stress_gpu — GPU 스트레스 테스트 (gpu_burn 전용)
+"""stress_gpu — GPU 스트레스 테스트 (gadget-burn 전용)
 Phase4: 부하 중 온도/전력/Utilization/Slowdown/ECC 모니터링 + 시계열 로깅
 
 기대 동작:
-  1. ~/gpu-burn/gpu_burn 바이너리 확인
-  2. 없으면 git clone → make 빌드 (~ 하위, sudo 불필요)
-  3. GPU 클래스 판별 (nvidia-smi name):
-     - 게이밍(GeForce) → `gpu_burn <duration>` (옵션 없음)
-     - 데이터센터(A/H/L/T/V100, RTX A/PRO, Tesla, Quadro 등) → `gpu_burn -tc <duration>`
+  1. ~/gadget-burn/gadget_burn 바이너리 확인
+  2. 없으면 git clone → make 빌드 (~ 하위, sudo 불필요, native 모드)
+  3. `gadget_burn -t <duration>` 실행 (GPU 클래스 무관 공통 CLI)
   4. 빌드/실행 실패 시 사유(stderr 마지막 5줄)와 함께 fail 반환
 
 환경변수:
@@ -16,7 +14,7 @@ Phase4: 부하 중 온도/전력/Utilization/Slowdown/ECC 모니터링 + 시계�
 
 FAIL: peak_temp > 87°C | HW throttle | ECC uncorrected 증가
       풀로드(util≥80%) + 저전력(power_ratio<70%)
-      gpu_burn 확보/실행 실패
+      gadget-burn 확보/실행 실패
       cooling_consistency_score < 60 (수냉 불량)
 WARN: SW/PWR throttle | ECC corrected 증가 | util<80%
       cooling_consistency_score < 75
@@ -33,9 +31,9 @@ import sys
 import time
 
 CHECK = "stress_gpu"
-GPU_BURN_DIR = os.path.expanduser("~/gpu-burn")
-GPU_BURN_BIN = f"{GPU_BURN_DIR}/gpu_burn"
-GPU_BURN_REPO = "https://github.com/wilicc/gpu-burn.git"
+GADGET_BURN_DIR = os.path.expanduser("~/gadget-burn")
+GADGET_BURN_BIN = f"{GADGET_BURN_DIR}/gadget_burn"
+GADGET_BURN_REPO = "https://github.com/DEEPGadget/gadget-burn.git"
 
 
 def run(cmd, timeout=10):
@@ -174,37 +172,37 @@ def _parse_slowdown_temps(temp_out: str) -> list[int | None]:
     return results
 
 
-def ensure_gpu_burn(details: list[str]) -> str | None:
-    """gpu_burn 바이너리 경로 반환. 확보 실패 시 details에 사유 추가하고 None 반환."""
+def ensure_gadget_burn(details: list[str]) -> str | None:
+    """gadget-burn 바이너리 경로 반환. 확보 실패 시 details에 사유 추가하고 None 반환."""
     # 1) 이미 있으면 그대로 사용
-    if os.path.isfile(GPU_BURN_BIN) and os.access(GPU_BURN_BIN, os.X_OK):
-        return GPU_BURN_BIN
+    if os.path.isfile(GADGET_BURN_BIN) and os.access(GADGET_BURN_BIN, os.X_OK):
+        return GADGET_BURN_BIN
 
     # 2) 빌드 도구 점검
     missing = [t for t in ("nvcc", "git", "make") if not run(f"command -v {t}")]
     if missing:
-        details.append(f"FAIL:gpu_burn_build_tools_missing={','.join(missing)}")
+        details.append(f"FAIL:gadget_burn_build_tools_missing={','.join(missing)}")
         return None
 
     # 3) 기존 디렉토리(부분 빌드 등) 정리
-    subprocess.run(f"rm -rf {GPU_BURN_DIR}", shell=True)
+    subprocess.run(f"rm -rf {GADGET_BURN_DIR}", shell=True)
 
     # 4) git clone
-    rc, _, err = run_full(f"git clone --depth=1 {GPU_BURN_REPO} {GPU_BURN_DIR}", timeout=120)
+    rc, _, err = run_full(f"git clone --depth=1 {GADGET_BURN_REPO} {GADGET_BURN_DIR}", timeout=120)
     if rc != 0:
-        details.append(f"FAIL:gpu_burn_clone_failed:{tail_lines(err)}")
+        details.append(f"FAIL:gadget_burn_clone_failed:{tail_lines(err)}")
         return None
 
-    # 5) make
-    rc, _, err = run_full(f"make -C {GPU_BURN_DIR}", timeout=300)
+    # 5) make (native 모드)
+    rc, _, err = run_full(f"make -C {GADGET_BURN_DIR}", timeout=300)
     if rc != 0:
-        details.append(f"FAIL:gpu_burn_make_failed:{tail_lines(err)}")
+        details.append(f"FAIL:gadget_burn_make_failed:{tail_lines(err)}")
         return None
 
-    if os.path.isfile(GPU_BURN_BIN) and os.access(GPU_BURN_BIN, os.X_OK):
-        return GPU_BURN_BIN
+    if os.path.isfile(GADGET_BURN_BIN) and os.access(GADGET_BURN_BIN, os.X_OK):
+        return GADGET_BURN_BIN
 
-    details.append("FAIL:gpu_burn_binary_missing_after_build")
+    details.append("FAIL:gadget_burn_binary_missing_after_build")
     return None
 
 
@@ -317,32 +315,29 @@ def main():
     ecc_corr_before = read_ecc("ecc.errors.corrected.volatile.total")
     ecc_uncorr_before = read_ecc("ecc.errors.uncorrected.volatile.total")
 
-    # gpu_burn 확보 (없으면 빌드)
-    burn_bin = ensure_gpu_burn(details)
+    # gadget-burn 확보 (없으면 빌드)
+    burn_bin = ensure_gadget_burn(details)
     if burn_bin is None:
         details.append(f"tool=none|duration_s={duration}")
         emit("fail", details)
 
-    tool = "gpu_burn"
+    tool = "gadget-burn"
     details.append(f"tool={tool}")
     details.append(f"duration_s={duration}")
     details.append(f"sample_interval_s={sample_interval}")
 
-    # gpu_burn 실행 — GPU 클래스에 따라 옵션 분기
-    burn_args = [burn_bin]
-    if gpu_class == "datacenter":
-        burn_args.append("-tc")
-    burn_args.append(str(duration))
+    # gadget-burn 실행 — gaming/datacenter 무관 공통 CLI (-t <duration>)
+    burn_args = [burn_bin, "-t", str(duration)]
     try:
         stress_proc = subprocess.Popen(
             burn_args,
-            cwd=GPU_BURN_DIR,
+            cwd=GADGET_BURN_DIR,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
         )
     except Exception as e:
-        details.append(f"FAIL:gpu_burn_launch_failed:{e}")
+        details.append(f"FAIL:gadget_burn_launch_failed:{e}")
         emit("fail", details)
 
     # 모니터링 루프 + 시계열 샘플 수집
@@ -516,7 +511,7 @@ def main():
         details.append(f"FAIL:full_load_low_power(util={avg_util}pct,ratio={pwr_ratio}pct_of_tdp)")
     if stress_died:
         status = "fail"
-        details.append(f"FAIL:gpu_burn_exited_early:{tail_lines(burn_stderr)}")
+        details.append(f"FAIL:gadget_burn_exited_early:{tail_lines(burn_stderr)}")
     if cooling_score < 60 and gpu_count >= 2:
         status = "fail"
         details.append(
