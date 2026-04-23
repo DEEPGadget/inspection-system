@@ -398,26 +398,26 @@ def main():
                 if temp > peak_temp:
                     peak_temp = temp
             except (ValueError, TypeError):
-                pass
+                pass  # [N/A] 등 비정상 문자열 시 해당 샘플 온도값 무시 (베스트에포트)
             try:
                 pwr = int(float(power_s))
                 sample_powers[idx] = pwr
                 if pwr > peak_power:
                     peak_power = pwr
             except (ValueError, TypeError):
-                pass
+                pass  # [N/A] 등 비정상 문자열 시 해당 샘플 전력값 무시 (베스트에포트)
             try:
                 util = int(util_s)
                 sample_utils[idx] = util
                 util_sum += util
                 sample_count += 1
             except (ValueError, TypeError):
-                pass
+                pass  # [N/A] 등 비정상 문자열 시 해당 샘플 GPU 사용률 무시 (베스트에포트)
             try:
                 mem_used = int(float(mem_s))
                 sample_mem[idx] = mem_used
             except (ValueError, TypeError):
-                pass
+                pass  # [N/A] 등 비정상 문자열 시 해당 샘플 메모리값 무시 (베스트에포트)
 
             if throttle_s.startswith("0x"):
                 try:
@@ -429,7 +429,7 @@ def main():
                     if dec & 0x1:
                         slowdown_pwr += 1
                 except (ValueError, TypeError):
-                    pass
+                    pass  # [N/A] 등 비정상 문자열 시 해당 샘플 throttle 비트 무시 (베스트에포트)
 
         # 시계열 샘플 기록 (상대 시간 초 단위)
         timeseries_samples.append(
