@@ -129,7 +129,7 @@ main 직접 push 금지. 브랜치 명명: `feature/`, `fix/`, `chore/`
 
 ## 현재 구현 상태
 
-> 상세 진행 현황·WARNING 목록·다음 작업 → `~/workspace/handoff/current-state.md`
+> 상세 진행 현황·WARNING 목록·다음 작업 → `handoff/current-state.md`
 
 ### v1 완료
 - [x] 프로젝트 스캐폴딩 + Docker Compose
