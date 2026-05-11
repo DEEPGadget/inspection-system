@@ -251,8 +251,12 @@ async def _check_driver_installed(conn: asyncssh.SSHClientConnection) -> bool:
 
 
 async def _check_cuda_installed(conn: asyncssh.SSHClientConnection) -> bool:
-    """nvcc 실행 가능 → CUDA toolkit 설치 여부."""
-    result = await conn.run("nvcc --version 2>/dev/null", check=False)
+    """nvcc 실행 가능 → CUDA toolkit 설치 여부.
+
+    SSH non-login 세션은 ~/.bashrc 를 읽지 않아 cuda/bin 이 PATH 에 없을 수 있음.
+    apt cuda-toolkit 설치 후 nvcc 는 /usr/local/cuda/bin 에만 존재하므로 절대경로로 확인.
+    """
+    result = await conn.run("/usr/local/cuda/bin/nvcc --version 2>/dev/null", check=False)
     return result.exit_status == 0
 
 
@@ -475,7 +479,7 @@ echo "cuda_installed"
 """
     ok, out = await _run_sudo(conn, script, secret, timeout=600)
     if ok:
-        verify = await conn.run("nvcc --version 2>&1", check=False)
+        verify = await conn.run("/usr/local/cuda/bin/nvcc --version 2>&1", check=False)
         if verify.exit_status != 0:
             return False, f"nvcc not found after install: {(verify.stdout or '')[:200]}"
     return ok, out[:500]

@@ -248,6 +248,45 @@ async def test_detect_has_nvidia_false():
 
 
 # ---------------------------------------------------------------------------
+# CUDA 감지/설치 시 nvcc 경로 (SSH non-login 세션 PATH 누락 회귀 방지)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_check_cuda_installed_uses_absolute_nvcc_path():
+    """SSH non-login 세션은 ~/.bashrc 미로드 → cuda/bin 누락. nvcc 절대경로로 호출해야 함."""
+    from workers.sw_install import _check_cuda_installed
+
+    conn = MagicMock()
+    conn.run = AsyncMock(return_value=MagicMock(stdout="", exit_status=0))
+    await _check_cuda_installed(conn)
+
+    cmd = conn.run.call_args.args[0]
+    assert "/usr/local/cuda/bin/nvcc" in cmd, f"absolute nvcc path missing: {cmd}"
+
+
+@pytest.mark.asyncio
+async def test_install_cuda_verify_uses_absolute_nvcc_path(monkeypatch):
+    """_install_cuda 의 사후 검증도 절대경로 nvcc 사용해야 함."""
+    from pydantic import SecretStr
+
+    from workers.sw_install import _install_cuda
+
+    monkeypatch.setattr(
+        "workers.sw_install._run_sudo",
+        AsyncMock(return_value=(True, "cuda_installed")),
+    )
+
+    conn = MagicMock()
+    conn.run = AsyncMock(return_value=MagicMock(stdout="release 13.0", exit_status=0))
+    ok, _ = await _install_cuda(conn, SecretStr("pw"), "13")
+
+    assert ok is True
+    verify_cmd = conn.run.call_args.args[0]
+    assert "/usr/local/cuda/bin/nvcc" in verify_cmd, f"verify must use absolute path: {verify_cmd}"
+
+
+# ---------------------------------------------------------------------------
 # _handle_account (SSH mock)
 # ---------------------------------------------------------------------------
 
