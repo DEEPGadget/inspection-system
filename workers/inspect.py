@@ -712,6 +712,15 @@ async def _async_post_install(
             phase_env: dict[str, str] = dict(phase_cfg.get("env", {}))
             if secret:
                 phase_env["SUDO_PASSWORD"] = secret.get_secret_value()
+            # SSH non-login 세션은 ~/.bashrc 미로드 → cuda/bin 누락. NVIDIA GPU 있는
+            # 모든 케이스(영구·임시 설치 무관)에서 nccl_bandwidth/stress_gpu 등이
+            # nvcc 를 찾을 수 있도록 PATH 명시 주입. inline env_prefix 는 $PATH
+            # 변수 확장 안 되므로 절대값 superset 으로 지정.
+            if has_nvidia:
+                phase_env["PATH"] = (
+                    "/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:"
+                    "/usr/sbin:/sbin:/usr/bin:/bin"
+                )
 
             success = await _run_phase_scripts(
                 conn,
